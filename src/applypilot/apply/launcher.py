@@ -88,13 +88,16 @@ def _make_mcp_config(cdp_port: int) -> dict:
 # ---------------------------------------------------------------------------
 
 def acquire_job(target_url: str | None = None, min_score: int = 7,
-                worker_id: int = 0) -> dict | None:
+                worker_id: int = 0,
+                max_job_age_days: int = 0) -> dict | None:
     """Atomically acquire the next job to apply to.
 
     Args:
         target_url: Apply to a specific URL instead of picking from queue.
         min_score: Minimum fit_score threshold.
         worker_id: Worker claiming this job (for tracking).
+        max_job_age_days: Reject jobs whose posting is older than this many days
+            (0 = no age limit). Uses posted_date when known, falls back to discovered_at.
 
     Returns:
         Job dict or None if the queue is empty.
@@ -107,7 +110,8 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
             like = f"%{target_url.split('?')[0].rstrip('/')}%"
             row = conn.execute("""
                 SELECT url, title, site, application_url, tailored_resume_path,
-                       fit_score, location, full_description, cover_letter_path
+                       fit_score, location, full_description, cover_letter_path,
+                       location_eligible, posted_date, discovered_at
                 FROM jobs
                 WHERE (url = ? OR application_url = ? OR application_url LIKE ? OR url LIKE ?)
                   AND tailored_resume_path IS NOT NULL
@@ -129,12 +133,14 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
                 params.extend(blocked_patterns)
             row = conn.execute(f"""
                 SELECT url, title, site, application_url, tailored_resume_path,
-                       fit_score, location, full_description, cover_letter_path
+                       fit_score, location, full_description, cover_letter_path,
+                       location_eligible, posted_date, discovered_at
                 FROM jobs
                 WHERE tailored_resume_path IS NOT NULL
                   AND (apply_status IS NULL OR apply_status = 'failed')
                   AND (apply_attempts IS NULL OR apply_attempts < ?)
                   AND fit_score >= ?
+                  AND (location_eligible IS NULL OR location_eligible = 1)
                   {site_clause}
                   {url_clauses}
                 ORDER BY fit_score DESC, url
@@ -145,9 +151,69 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
             conn.rollback()
             return None
 
+        # Validate the URL is a real http(s) URL before handing it to the worker.
+        # Jobs with url="None" or an empty URL can slip through from discovery
+        # (str(None) == "None" in Python). Launching an agent with no URL wastes
+        # compute and stalls the queue — mark them permanently failed immediately.
+        resolved_url = (row["application_url"] or row["url"] or "").strip()
+        if not resolved_url or not resolved_url.startswith("http"):
+            conn.execute(
+                "UPDATE jobs SET apply_status='failed', apply_error='invalid_url', "
+                "apply_attempts=99 WHERE url=?",
+                (row["url"],),
+            )
+            conn.commit()
+            logger.warning(
+                "Skipping job '%s': URL is invalid or missing ('%s'). Marked permanently failed.",
+                row.get("title", "?"), resolved_url or "empty",
+            )
+            return None
+
+        # Guard: location-ineligible (scored explicitly NOT_ELIGIBLE by the scorer).
+        # Belt-and-suspenders for jobs that existed before the location filter was
+        # added, or that were somehow acquired via --url despite being ineligible.
+        if row["location_eligible"] == 0:
+            conn.execute(
+                "UPDATE jobs SET apply_status='failed', apply_error='not_eligible_location', "
+                "apply_attempts=99 WHERE url=?",
+                (row["url"],),
+            )
+            conn.commit()
+            logger.warning(
+                "Skipping job '%s': location not eligible. Marked permanently failed.",
+                row.get("title", "?"),
+            )
+            return None
+
+        # Guard: expired posting — reject jobs older than max_job_age_days.
+        # Uses posted_date when known (set by Workday/JobSpy scrapers), falls back
+        # to discovered_at. Skipped when max_job_age_days == 0.
+        if max_job_age_days > 0:
+            from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+            age_str = row["posted_date"] or (row["discovered_at"] or "")[:10]
+            if age_str:
+                try:
+                    age_date = _dt.strptime(age_str[:10], "%Y-%m-%d").replace(tzinfo=_tz.utc)
+                    cutoff = _dt.now(_tz.utc) - _td(days=max_job_age_days)
+                    if age_date < cutoff:
+                        conn.execute(
+                            "UPDATE jobs SET apply_status='failed', apply_error='expired_posting', "
+                            "apply_attempts=99 WHERE url=?",
+                            (row["url"],),
+                        )
+                        conn.commit()
+                        logger.warning(
+                            "Skipping job '%s': posting date %s is older than %d days. "
+                            "Marked permanently failed.",
+                            row.get("title", "?"), age_str[:10], max_job_age_days,
+                        )
+                        return None
+                except ValueError:
+                    pass  # Unparseable date — let it through
+
         # Skip manual ATS sites (unsolvable CAPTCHAs)
         from applypilot.config import is_manual_ats
-        apply_url = row["application_url"] or row["url"]
+        apply_url = resolved_url
         if is_manual_ats(apply_url):
             conn.execute(
                 "UPDATE jobs SET apply_status = 'manual', apply_error = 'manual ATS' WHERE url = ?",
@@ -548,7 +614,8 @@ def _is_permanent_failure(result: str) -> bool:
 def worker_loop(worker_id: int = 0, limit: int = 1,
                 target_url: str | None = None,
                 min_score: int = 7, headless: bool = False,
-                model: str = "sonnet", dry_run: bool = False) -> tuple[int, int]:
+                model: str = "sonnet", dry_run: bool = False,
+                max_job_age_days: int = 0) -> tuple[int, int]:
     """Run jobs sequentially until limit is reached or queue is empty.
 
     Args:
@@ -559,6 +626,7 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
         headless: Run Chrome headless.
         model: Claude model name.
         dry_run: Don't click Submit.
+        max_job_age_days: Skip jobs older than this many days (0 = no limit).
 
     Returns:
         Tuple of (applied_count, failed_count).
@@ -578,7 +646,7 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
                      last_action="waiting for job", actions=0)
 
         job = acquire_job(target_url=target_url, min_score=min_score,
-                          worker_id=worker_id)
+                          worker_id=worker_id, max_job_age_days=max_job_age_days)
         if not job:
             if not continuous:
                 add_event(f"[W{worker_id}] Queue empty")
@@ -653,7 +721,8 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
 def main(limit: int = 1, target_url: str | None = None,
          min_score: int = 7, headless: bool = False, model: str = "sonnet",
          dry_run: bool = False, continuous: bool = False,
-         poll_interval: int = 60, workers: int = 1) -> None:
+         poll_interval: int = 60, workers: int = 1,
+         max_job_age_days: int = 0) -> None:
     """Launch the apply pipeline.
 
     Args:
@@ -666,6 +735,7 @@ def main(limit: int = 1, target_url: str | None = None,
         continuous: Run forever, polling for new jobs.
         poll_interval: Seconds between DB polls when queue is empty.
         workers: Number of parallel workers (default 1).
+        max_job_age_days: Skip jobs older than this many days (0 = no limit).
     """
     global POLL_INTERVAL
     POLL_INTERVAL = poll_interval
@@ -737,6 +807,7 @@ def main(limit: int = 1, target_url: str | None = None,
                     headless=headless,
                     model=model,
                     dry_run=dry_run,
+                    max_job_age_days=max_job_age_days,
                 )
             else:
                 # Multi-worker — distribute limit across workers
@@ -760,6 +831,7 @@ def main(limit: int = 1, target_url: str | None = None,
                             headless=headless,
                             model=model,
                             dry_run=dry_run,
+                            max_job_age_days=max_job_age_days,
                         ): i
                         for i in range(workers)
                     }

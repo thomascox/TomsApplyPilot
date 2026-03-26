@@ -161,6 +161,47 @@ def _setup_profile() -> dict:
         "real_metrics": [s.strip() for s in metrics.split(",") if s.strip()],
     }
 
+    # -- Career Focus (optional) --
+    # Helps the scorer down-weight roles whose primary duties are centred on
+    # skills the candidate has not been using recently. Entirely optional —
+    # candidates whose current work matches their target roles can skip this.
+    console.print("\n[bold cyan]Career Focus (optional)[/bold cyan]")
+    console.print(
+        "[dim]If your career has shifted direction (e.g. from IC engineering to management,\n"
+        "from one domain to another), this lets the AI scorer account for skill recency.\n"
+        "Roles that primarily require your historical skills will be scored lower.[/dim]"
+    )
+    if Confirm.ask("Has your career shifted focus in recent years?", default=False):
+        target_roles_raw = Prompt.ask(
+            "Target role types you want to land (comma-separated)\n"
+            "  e.g. Engineering Manager, Director of Product, Release Manager",
+            default="",
+        )
+        primary_skills_raw = Prompt.ask(
+            "Your CURRENT primary skills — actively used in your recent work (comma-separated)\n"
+            "  e.g. team leadership, roadmap planning, stakeholder communication",
+            default="",
+        )
+        secondary_skills_raw = Prompt.ask(
+            "Historical/background skills — real but no longer your day-to-day focus (comma-separated)\n"
+            "  e.g. Python, AWS, software architecture, hands-on coding",
+            default="",
+        )
+        career_note = Prompt.ask(
+            "Brief career trajectory note (free text, used as context for AI scoring)\n"
+            "  e.g. 'Moved from IC software engineering to engineering leadership around 2020'",
+            default="",
+        )
+        profile["career_focus"] = {
+            "target_roles": [s.strip() for s in target_roles_raw.split(",") if s.strip()],
+            "primary_skills": [s.strip() for s in primary_skills_raw.split(",") if s.strip()],
+            "secondary_skills": [s.strip() for s in secondary_skills_raw.split(",") if s.strip()],
+            "career_note": career_note.strip(),
+        }
+        console.print("[green]Career focus saved — the scorer will apply recency weighting.[/green]")
+    else:
+        console.print("[dim]Skipped. You can add a career_focus block to profile.json manually later.[/dim]")
+
     # -- EEO Voluntary (defaults) --
     profile["eeo_voluntary"] = {
         "gender": "Decline to self-identify",

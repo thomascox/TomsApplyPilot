@@ -180,6 +180,14 @@ _ALL_COLUMNS: dict[str, str] = {
     "apply_duration_ms": "INTEGER",
     "apply_task_id": "TEXT",
     "verification_confidence": "TEXT",
+    # Scoring — location eligibility (1=eligible, 0=not eligible, NULL=unknown)
+    "location_eligible": "INTEGER",
+    # Scoring — score before the most recent rescore (NULL if never rescored)
+    "previous_score": "INTEGER",
+    # Discovery — ISO date when the job was originally posted (NULL if unknown)
+    "posted_date": "TEXT",
+    # User interaction — 1 if the user starred this job as a favorite, 0 otherwise
+    "favorite": "INTEGER DEFAULT 0",
 }
 
 
@@ -410,7 +418,8 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
         where += " AND fit_score >= ?"
         params.append(min_score)
 
-    query = f"SELECT * FROM jobs WHERE {where} ORDER BY fit_score DESC NULLS LAST, discovered_at DESC"
+    # Favorites always come first so tailoring/apply processes them before other jobs.
+    query = f"SELECT * FROM jobs WHERE {where} ORDER BY COALESCE(favorite,0) DESC, fit_score DESC NULLS LAST, discovered_at DESC"
     if limit > 0:
         query += " LIMIT ?"
         params.append(limit)

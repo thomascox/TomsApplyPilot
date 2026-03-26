@@ -61,8 +61,36 @@ def main(
         callback=_version_callback,
         is_eager=True,
     ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v",
+        help="Enable DEBUG logging. Shows full tracebacks, LLM request details, and per-attempt validation output.",
+        is_eager=True,
+    ),
 ) -> None:
-    """ApplyPilot — AI-powered end-to-end job application pipeline."""
+    """ApplyPilot — AI-powered end-to-end job application pipeline.
+
+    Typical workflow:
+
+    \b
+      applypilot init                        Set up profile, resume, and search config
+      applypilot run discover enrich         Find and enrich job listings
+      applypilot run score                   Score jobs by fit (1-10) and location eligibility
+      applypilot run tailor cover            Generate tailored resumes and cover letters
+      applypilot apply --limit 5             Submit applications
+
+    Run any stage individually or chain them:
+
+    \b
+      applypilot run                         Full pipeline (all stages)
+      applypilot run score tailor cover      LLM stages only
+      applypilot run score --rescore         Re-score all jobs (e.g. after profile changes)
+
+    Check setup with:  applypilot doctor
+    View DB stats with: applypilot status
+    """
+    if verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+        logging.getLogger("applypilot").setLevel(logging.DEBUG)
 
 
 @app.command()
@@ -80,25 +108,96 @@ def run(
         help=(
             "Pipeline stages to run. "
             f"Valid: {', '.join(VALID_STAGES)}, all. "
-            "Defaults to 'all' if omitted."
+            "Defaults to 'all' if omitted. "
+            "Examples: 'score tailor cover', 'discover enrich', 'score'."
         ),
     ),
-    min_score: int = typer.Option(7, "--min-score", help="Minimum fit score for tailor/cover stages."),
-    workers: int = typer.Option(1, "--workers", "-w", help="Parallel threads for discovery/enrichment stages."),
-    stream: bool = typer.Option(False, "--stream", help="Run stages concurrently (streaming mode)."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Preview stages without executing."),
-    validation: str = typer.Option(
-        "normal",
-        "--validation",
+    min_score: int = typer.Option(
+        7, "--min-score",
         help=(
-            "Validation strictness for tailor/cover stages. "
-            "strict: banned words = errors, judge must pass. "
-            "normal: banned words = warnings only (default, recommended for Gemini free tier). "
-            "lenient: banned words ignored, LLM judge skipped (fastest, fewest API calls)."
+            "Minimum fit score (1-10) for tailor and cover stages. "
+            "Jobs scoring below this threshold are skipped. "
+            "Lower values process more jobs but spend more LLM tokens on poor fits."
+        ),
+    ),
+    workers: int = typer.Option(
+        1, "--workers", "-w",
+        help="Parallel threads for discover and enrich stages. Has no effect on score/tailor/cover (sequential).",
+    ),
+    stream: bool = typer.Option(
+        False, "--stream",
+        help=(
+            "Run stages concurrently — each stage starts as soon as the previous one produces work. "
+            "Useful for large batches where you want the pipeline to flow without waiting for each stage to fully complete."
+        ),
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run",
+        help="Preview which stages would run without executing anything.",
+    ),
+    validation: str = typer.Option(
+        "normal", "--validation",
+        help=(
+            "Tailor/cover validation strictness. "
+            "strict: banned filler words are hard errors that trigger retries; LLM judge must pass. "
+            "normal: banned words are warnings only; judge failure accepted on last retry (recommended). "
+            "lenient: banned words ignored; LLM judge skipped entirely. Fastest, fewest API calls. "
+            "Use 'lenient' when using a local LLM that struggles with the judge step."
+        ),
+    ),
+    rescore: bool = typer.Option(
+        False, "--rescore",
+        help=(
+            "Re-score already-scored jobs in addition to new ones. "
+            "Use after updating your profile (e.g. adding skills), switching LLM providers, "
+            "or after the location eligibility rules changed. "
+            "Only applies when the 'score' stage is included."
+        ),
+    ),
+    rescore_protect: bool = typer.Option(
+        True, "--rescore-protect/--no-rescore-protect",
+        help=(
+            "When rescoring, skip jobs whose current score is already >= --min-score "
+            "(default: enabled). This prevents model calibration differences from silently "
+            "downgrading jobs that are already pipeline-eligible (tailored, ready to apply). "
+            "Use --no-rescore-protect to force-rescore everything regardless of current score."
+        ),
+    ),
+    limit: int = typer.Option(
+        0, "--limit", "-l",
+        help=(
+            "Maximum number of jobs to process per stage in this run (0 = no limit). "
+            "Useful for testing or when you want to process in smaller batches. "
+            "Applies to score, tailor, and cover stages."
         ),
     ),
 ) -> None:
-    """Run pipeline stages: discover, enrich, score, tailor, cover, pdf."""
+    """Run pipeline stages: discover, enrich, score, tailor, cover, pdf.
+
+    \b
+    STAGES:
+      discover   Scrape job boards (JobSpy: Indeed, LinkedIn, ZipRecruiter, Glassdoor)
+                 and corporate Workday portals for new job listings.
+      enrich     Fetch full job descriptions and direct apply URLs for discovered jobs.
+      score      LLM evaluates each job on a 1-10 fit scale. Also checks location
+                 eligibility — overseas/hybrid roles are capped at score 2.
+      tailor     Generate a tailored resume for each job scoring >= --min-score.
+                 Uses LLM with validation (banned words, fabrication check, LLM judge).
+      cover      Generate a cover letter for each job that has a tailored resume.
+      pdf        Convert tailored resumes and cover letters from .txt to PDF.
+
+    \b
+    EXAMPLES:
+      applypilot run                         Full pipeline
+      applypilot run discover enrich         Discovery only
+      applypilot run score --rescore                    Re-score ineligible jobs (protects score >= 7)
+      applypilot run score --rescore --min-score 8      Protect only jobs scored >= 8
+      applypilot run score --rescore --no-rescore-protect   Force-rescore everything
+      applypilot run score --limit 20        Score up to 20 jobs
+      applypilot run tailor --min-score 8    Only tailor high-fit jobs
+      applypilot run tailor --validation lenient   Use lenient mode for local LLMs
+      applypilot run --stream                All stages concurrently
+    """
     _bootstrap()
 
     from applypilot.pipeline import run_pipeline
@@ -136,6 +235,9 @@ def run(
         stream=stream,
         workers=workers,
         validation_mode=validation,
+        rescore=rescore,
+        rescore_protect=rescore_protect,
+        limit=limit,
     )
 
     if result.get("errors"):
@@ -144,21 +246,119 @@ def run(
 
 @app.command()
 def apply(
-    limit: Optional[int] = typer.Option(None, "--limit", "-l", help="Max applications to submit."),
-    workers: int = typer.Option(1, "--workers", "-w", help="Number of parallel browser workers."),
-    min_score: int = typer.Option(7, "--min-score", help="Minimum fit score for job selection."),
-    model: str = typer.Option("haiku", "--model", "-m", help="Claude model name."),
-    continuous: bool = typer.Option(False, "--continuous", "-c", help="Run forever, polling for new jobs."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Preview actions without submitting."),
-    headless: bool = typer.Option(False, "--headless", help="Run browsers in headless mode."),
-    url: Optional[str] = typer.Option(None, "--url", help="Apply to a specific job URL."),
-    gen: bool = typer.Option(False, "--gen", help="Generate prompt file for manual debugging instead of running."),
-    mark_applied: Optional[str] = typer.Option(None, "--mark-applied", help="Manually mark a job URL as applied."),
-    mark_failed: Optional[str] = typer.Option(None, "--mark-failed", help="Manually mark a job URL as failed (provide URL)."),
-    fail_reason: Optional[str] = typer.Option(None, "--fail-reason", help="Reason for --mark-failed."),
-    reset_failed: bool = typer.Option(False, "--reset-failed", help="Reset all failed jobs for retry."),
+    limit: Optional[int] = typer.Option(
+        None, "--limit", "-l",
+        help=(
+            "Max number of applications to submit in this session. "
+            "Defaults to 1 unless --continuous is set. "
+            "Use 0 with --continuous for unlimited."
+        ),
+    ),
+    workers: int = typer.Option(
+        1, "--workers", "-w",
+        help="Number of parallel browser workers (each opens its own Chrome instance).",
+    ),
+    min_score: int = typer.Option(
+        7, "--min-score",
+        help="Minimum fit score (1-10) for job selection. Jobs below this score are skipped.",
+    ),
+    model: str = typer.Option(
+        "haiku", "--model", "-m",
+        help=(
+            "Claude model for the apply agent. "
+            "Valid: haiku (fastest, cheapest), sonnet (balanced), opus (most capable). "
+            "haiku is recommended — apply tasks are well-defined and don't need a large model."
+        ),
+    ),
+    continuous: bool = typer.Option(
+        False, "--continuous", "-c",
+        help="Run forever, polling the DB every --poll-interval seconds for new jobs.",
+    ),
+    poll_interval: int = typer.Option(
+        60, "--poll-interval",
+        help=(
+            "Seconds between DB polls when the queue is empty (continuous mode only). "
+            "Default: 60."
+        ),
+    ),
+    max_job_age: int = typer.Option(
+        30, "--max-job-age",
+        help=(
+            "Skip jobs whose posting date (or discovery date if unknown) is older than "
+            "this many days. Marked permanently failed as 'expired_posting' so they are "
+            "never retried. Default: 30. Set to 0 to disable the age check."
+        ),
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run",
+        help="Navigate and fill forms but do not click the final Submit button.",
+    ),
+    headless: bool = typer.Option(
+        False, "--headless",
+        help="Run Chrome in headless mode (no visible browser window).",
+    ),
+    url: Optional[str] = typer.Option(
+        None, "--url",
+        help="Apply to one specific job URL instead of pulling from the queue.",
+    ),
+    gen: bool = typer.Option(
+        False, "--gen",
+        help=(
+            "Generate the agent prompt file and print the manual claude CLI command. "
+            "Use with --url for debugging a specific job without running the full pipeline. "
+            "Does not launch Chrome or submit anything."
+        ),
+    ),
+    mark_applied: Optional[str] = typer.Option(
+        None, "--mark-applied",
+        help="Manually mark a job URL as applied (bypasses the agent). Useful when you applied manually.",
+    ),
+    mark_failed: Optional[str] = typer.Option(
+        None, "--mark-failed",
+        help="Permanently mark a job URL as failed so it is never retried. Use with --fail-reason.",
+    ),
+    fail_reason: Optional[str] = typer.Option(
+        None, "--fail-reason",
+        help="Reason string for --mark-failed (e.g. 'requires_relocation', 'salary_too_low').",
+    ),
+    reset_failed: bool = typer.Option(
+        False, "--reset-failed",
+        help=(
+            "Reset all previously-failed jobs so they can be retried. "
+            "Useful after fixing a bug or changing configuration."
+        ),
+    ),
 ) -> None:
-    """Launch auto-apply to submit job applications."""
+    """Launch auto-apply: open Chrome, fill forms, and submit applications via Claude agent.
+
+    Requires Tier 3 setup (Claude Code CLI + Chrome + Node.js). Run 'applypilot doctor' to check.
+    Jobs must have a tailored resume before they can be applied to — run 'applypilot run tailor' first.
+
+    \b
+    NORMAL USAGE:
+      applypilot apply                       Apply to 1 job (default)
+      applypilot apply --limit 5             Apply to up to 5 jobs
+      applypilot apply --continuous          Run forever, apply as jobs become ready
+      applypilot apply --url <url>           Apply to a specific job URL
+      applypilot apply --dry-run             Fill forms but don't submit
+      applypilot apply --max-job-age 14      Skip jobs posted more than 14 days ago
+      applypilot apply --max-job-age 0       Disable age check entirely
+
+    \b
+    UTILITY MODES (no Chrome needed):
+      applypilot apply --mark-applied <url>           Record a manually submitted application
+      applypilot apply --mark-failed <url>            Permanently skip a job
+        --fail-reason requires_relocation
+      applypilot apply --reset-failed                 Re-queue all failed jobs for retry
+      applypilot apply --gen --url <url>              Dump the agent prompt for debugging
+
+    \b
+    LOCATION INELIGIBLE JOBS:
+      Jobs in overseas or hybrid-only locations are scored <=2 by the scorer
+      and will not reach the apply queue. If a job slipped through before the
+      location check was in place, mark it failed:
+        applypilot apply --mark-failed <url> --fail-reason not_eligible_location
+    """
     _bootstrap()
 
     from applypilot.config import check_tier, PROFILE_PATH as _profile_path
@@ -252,7 +452,9 @@ def apply(
         model=model,
         dry_run=dry_run,
         continuous=continuous,
+        poll_interval=poll_interval,
         workers=workers,
+        max_job_age_days=max_job_age,
     )
 
 
@@ -323,8 +525,448 @@ def status() -> None:
 
 
 @app.command()
+def prune(
+    stale: bool = typer.Option(
+        False, "--stale",
+        help=(
+            "Permanently fail jobs older than --max-days that have not been tailored or applied. "
+            "Marks them apply_attempts=99 / expired_posting so they are excluded from scoring, "
+            "tailoring, and the dashboard — but the records are kept for history. "
+            "Use --reset-failed to recover them if needed."
+        ),
+    ),
+    max_days: int = typer.Option(
+        30, "--max-days",
+        help="Age threshold (days) used by --stale. Default: 30.",
+    ),
+    location_ineligible: bool = typer.Option(
+        False, "--location-ineligible",
+        help=(
+            "Permanently fail queued jobs scored as location-ineligible "
+            "(location_eligible=0). They will never be re-queued."
+        ),
+    ),
+    invalid_url: bool = typer.Option(
+        False, "--invalid-url",
+        help="Permanently fail jobs with a missing or non-HTTP URL.",
+    ),
+    no_description: bool = typer.Option(
+        False, "--no-description",
+        help="Delete jobs that were never successfully enriched (no full_description).",
+    ),
+    all_issues: bool = typer.Option(
+        False, "--all",
+        help="Run all cleanup operations: --stale, --location-ineligible, --invalid-url, --no-description.",
+    ),
+    reset_failed: bool = typer.Option(
+        False, "--reset-failed",
+        help=(
+            "Reopen permanently failed apply jobs (apply_attempts=99) so they "
+            "re-enter the apply queue. Does not affect non-apply failures."
+        ),
+    ),
+    reset_stuck: bool = typer.Option(
+        False, "--reset-stuck",
+        help=(
+            "Clear apply_status='in_progress' jobs left over from a crashed session "
+            "so they can be picked up again."
+        ),
+    ),
+    reset_scores: bool = typer.Option(
+        False, "--reset-scores",
+        help=(
+            "Wipe all fit_score values so every job is re-scored from scratch on the "
+            "next 'run score' or 'run' invocation."
+        ),
+    ),
+    nuke: bool = typer.Option(
+        False, "--nuke",
+        help="[DANGER] Delete every job from the database. Requires --yes.",
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y",
+        help="Skip confirmation prompts.",
+    ),
+) -> None:
+    """Audit and clean up the jobs database.
+
+    Run with no flags to see a full diagnostic report of all issues — nothing
+    is changed. Add specific flags to fix individual categories.
+
+    \b
+    AUDIT (no flags):
+      applypilot prune                        Show all issue counts, no changes
+
+    \b
+    CLEANUP (delete or permanently skip):
+      applypilot prune --stale                Permanently fail jobs older than 30 days (pre-tailoring)
+      applypilot prune --stale --max-days 14  Use a tighter age threshold
+      applypilot prune --location-ineligible  Permanently fail location-ineligible jobs
+      applypilot prune --invalid-url          Permanently fail jobs with bad URLs
+      applypilot prune --no-description       Delete jobs that never got enriched
+      applypilot prune --all                  Run all four cleanup operations above
+
+    \b
+    RESET (reopen for retry):
+      applypilot prune --reset-failed         Re-queue permanently failed apply jobs
+      applypilot prune --reset-stuck          Unstick in_progress jobs from crashed sessions
+      applypilot prune --reset-scores         Clear all scores (re-score everything next run)
+
+    \b
+    NUCLEAR:
+      applypilot prune --nuke --yes           Delete ALL jobs and start fresh
+    """
+    _bootstrap()
+
+    from datetime import datetime, timedelta, timezone as _tz
+    from applypilot.database import get_connection
+
+    conn = get_connection()
+    any_flag = any([stale, location_ineligible, invalid_url, no_description,
+                    all_issues, reset_failed, reset_stuck, reset_scores, nuke])
+
+    # ------------------------------------------------------------------
+    # AUDIT MODE — no flags: show a report of all issue categories
+    # ------------------------------------------------------------------
+    if not any_flag:
+        cutoff = (datetime.now(_tz.utc) - timedelta(days=max_days)).strftime("%Y-%m-%d")
+
+        issues = [
+            (
+                "Stale (no tailoring/apply, older than 30d)",
+                conn.execute(
+                    "SELECT COUNT(*) FROM jobs "
+                    "WHERE tailored_resume_path IS NULL AND applied_at IS NULL "
+                    "AND COALESCE(apply_status,'') NOT IN ('applied','failed') "
+                    "AND COALESCE(posted_date, substr(discovered_at,1,10)) < ?",
+                    (cutoff,),
+                ).fetchone()[0],
+                "--stale",
+            ),
+            (
+                "Location-ineligible (in queue)",
+                conn.execute(
+                    "SELECT COUNT(*) FROM jobs "
+                    "WHERE location_eligible = 0 "
+                    "AND COALESCE(apply_status,'') NOT IN ('applied','failed')",
+                ).fetchone()[0],
+                "--location-ineligible",
+            ),
+            (
+                "Invalid URL (no http)",
+                conn.execute(
+                    "SELECT COUNT(*) FROM jobs "
+                    "WHERE (url IS NULL OR url = '' OR url = 'None' "
+                    "       OR (url NOT LIKE 'http%' AND (application_url IS NULL "
+                    "           OR application_url NOT LIKE 'http%'))) "
+                    "AND COALESCE(apply_status,'') NOT IN ('applied','failed')",
+                ).fetchone()[0],
+                "--invalid-url",
+            ),
+            (
+                "No description (enrichment never succeeded)",
+                conn.execute(
+                    "SELECT COUNT(*) FROM jobs "
+                    "WHERE full_description IS NULL",
+                ).fetchone()[0],
+                "--no-description",
+            ),
+            (
+                "Permanently failed (apply_attempts=99)",
+                conn.execute(
+                    "SELECT COUNT(*) FROM jobs WHERE apply_attempts = 99",
+                ).fetchone()[0],
+                "--reset-failed (to retry) or --stale (to permanently fail)",
+            ),
+            (
+                "Stuck in-progress (crashed session)",
+                conn.execute(
+                    "SELECT COUNT(*) FROM jobs WHERE apply_status = 'in_progress'",
+                ).fetchone()[0],
+                "--reset-stuck",
+            ),
+        ]
+
+        totals = conn.execute(
+            "SELECT COUNT(*), "
+            "SUM(CASE WHEN applied_at IS NOT NULL THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN fit_score IS NOT NULL THEN 1 ELSE 0 END) "
+            "FROM jobs"
+        ).fetchone()
+
+        console.print("\n[bold]Database Audit[/bold]\n")
+
+        info = Table(show_header=False, box=None, padding=(0, 2))
+        info.add_column("", style="dim")
+        info.add_column("", justify="right")
+        info.add_row("Total jobs", str(totals[0]))
+        info.add_row("Applied", str(totals[1]))
+        info.add_row("Scored", str(totals[2]))
+        console.print(info)
+        console.print()
+
+        issue_table = Table(title="Issues", show_header=True, header_style="bold yellow")
+        issue_table.add_column("Issue")
+        issue_table.add_column("Count", justify="right")
+        issue_table.add_column("Fix with")
+
+        any_issues = False
+        for label, count, fix in issues:
+            color = "red" if count > 0 else "green"
+            issue_table.add_row(label, f"[{color}]{count}[/{color}]", f"[dim]{fix}[/dim]")
+            if count > 0:
+                any_issues = True
+
+        console.print(issue_table)
+        if not any_issues:
+            console.print("\n[green]No issues found.[/green]")
+        else:
+            console.print("\nRun with specific flags to fix issues. Use [bold]-y[/bold] to skip confirmations.")
+        return
+
+    # ------------------------------------------------------------------
+    # Helper: confirm before destructive actions
+    # ------------------------------------------------------------------
+    def _confirm(msg: str) -> bool:
+        if yes:
+            return True
+        return typer.confirm(msg, default=False)
+
+    def _show_table(rows, columns: list[str], title: str) -> None:
+        t = Table(title=title, show_header=True, header_style="bold")
+        for c in columns:
+            t.add_column(c)
+        for row in rows:
+            t.add_row(*[str(v or "?")[:60] for v in row])
+        console.print(t)
+
+    # ------------------------------------------------------------------
+    # --nuke  (must be first — exit after)
+    # ------------------------------------------------------------------
+    if nuke:
+        total = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+        console.print(f"\n[bold red]NUKE: This will permanently delete all {total} jobs from the database.[/bold red]")
+        if not _confirm("Are you absolutely sure?"):
+            console.print("[yellow]Aborted.[/yellow]")
+            return
+        conn.execute("DELETE FROM jobs")
+        conn.commit()
+        console.print(f"[green]Deleted {total} jobs. Database is empty.[/green]")
+        return
+
+    # ------------------------------------------------------------------
+    # --stale / --all
+    # ------------------------------------------------------------------
+    if stale or all_issues:
+        cutoff = (datetime.now(_tz.utc) - timedelta(days=max_days)).strftime("%Y-%m-%d")
+        rows = conn.execute(
+            "SELECT url, title, site, "
+            "COALESCE(posted_date, substr(discovered_at,1,10)) AS age_date, fit_score "
+            "FROM jobs "
+            "WHERE tailored_resume_path IS NULL AND applied_at IS NULL "
+            "AND COALESCE(apply_status,'') NOT IN ('applied','failed') "
+            "AND COALESCE(posted_date, substr(discovered_at,1,10)) < ? "
+            "ORDER BY age_date",
+            (cutoff,),
+        ).fetchall()
+        if rows:
+            _show_table(
+                [(r[3], r[4], r[2], r[1]) for r in rows],
+                ["Date", "Score", "Site", "Title"],
+                f"Stale jobs (older than {max_days} days, not yet tailored/applied)",
+            )
+            console.print(f"{len(rows)} job(s) will be permanently failed (expired_posting).")
+            if _confirm(f"Permanently fail {len(rows)} stale job(s)?"):
+                urls = [r[0] for r in rows]
+                # Mark permanently failed — same semantics as the apply pre-flight
+                # age guard in acquire_job(). Records are kept for history; use
+                # --reset-failed to recover them if needed.
+                conn.execute(
+                    f"UPDATE jobs SET apply_attempts=99, apply_status='failed', "
+                    f"apply_error='expired_posting' "
+                    f"WHERE url IN ({','.join('?'*len(urls))})",
+                    urls,
+                )
+                conn.commit()
+                console.print(f"[green]Permanently failed {len(rows)} stale job(s).[/green]")
+            else:
+                console.print("[yellow]Skipped --stale.[/yellow]")
+        else:
+            console.print(f"[green]--stale: no jobs older than {max_days} days found.[/green]")
+
+    # ------------------------------------------------------------------
+    # --location-ineligible / --all
+    # ------------------------------------------------------------------
+    if location_ineligible or all_issues:
+        rows = conn.execute(
+            "SELECT url, title, site, location, fit_score FROM jobs "
+            "WHERE location_eligible = 0 "
+            "AND COALESCE(apply_status,'') NOT IN ('applied','failed') "
+            "ORDER BY title",
+        ).fetchall()
+        if rows:
+            _show_table(
+                [(r[2], r[4], r[3], r[1]) for r in rows],
+                ["Site", "Score", "Location", "Title"],
+                "Location-ineligible jobs",
+            )
+            console.print(f"{len(rows)} job(s) to permanently fail.")
+            if _confirm(f"Permanently fail {len(rows)} location-ineligible job(s)?"):
+                for r in rows:
+                    conn.execute(
+                        "UPDATE jobs SET apply_status='failed', apply_error='not_eligible_location', "
+                        "apply_attempts=99 WHERE url=?",
+                        (r[0],),
+                    )
+                conn.commit()
+                console.print(f"[green]Marked {len(rows)} location-ineligible job(s) as permanently failed.[/green]")
+            else:
+                console.print("[yellow]Skipped --location-ineligible.[/yellow]")
+        else:
+            console.print("[green]--location-ineligible: none found.[/green]")
+
+    # ------------------------------------------------------------------
+    # --invalid-url / --all
+    # ------------------------------------------------------------------
+    if invalid_url or all_issues:
+        rows = conn.execute(
+            "SELECT url, title, site FROM jobs "
+            "WHERE (url IS NULL OR url = '' OR url = 'None' "
+            "       OR (url NOT LIKE 'http%' AND (application_url IS NULL "
+            "           OR application_url NOT LIKE 'http%'))) "
+            "AND COALESCE(apply_status,'') NOT IN ('applied','failed') "
+            "ORDER BY title",
+        ).fetchall()
+        if rows:
+            _show_table([(r[2], r[1], r[0]) for r in rows], ["Site", "Title", "URL"], "Invalid-URL jobs")
+            console.print(f"{len(rows)} job(s) to permanently fail.")
+            if _confirm(f"Permanently fail {len(rows)} invalid-URL job(s)?"):
+                for r in rows:
+                    conn.execute(
+                        "UPDATE jobs SET apply_status='failed', apply_error='invalid_url', "
+                        "apply_attempts=99 WHERE url=?",
+                        (r[0],),
+                    )
+                conn.commit()
+                console.print(f"[green]Marked {len(rows)} invalid-URL job(s) as permanently failed.[/green]")
+            else:
+                console.print("[yellow]Skipped --invalid-url.[/yellow]")
+        else:
+            console.print("[green]--invalid-url: none found.[/green]")
+
+    # ------------------------------------------------------------------
+    # --no-description / --all
+    # ------------------------------------------------------------------
+    if no_description or all_issues:
+        rows = conn.execute(
+            "SELECT url, title, site, discovered_at FROM jobs "
+            "WHERE full_description IS NULL "
+            "ORDER BY discovered_at",
+        ).fetchall()
+        if rows:
+            _show_table(
+                [(r[2], r[3][:10] if r[3] else "?", r[1]) for r in rows],
+                ["Site", "Discovered", "Title"],
+                "Jobs with no description",
+            )
+            console.print(f"{len(rows)} job(s) to delete.")
+            if _confirm(f"Delete {len(rows)} never-enriched job(s)?"):
+                urls = [r[0] for r in rows]
+                conn.execute(f"DELETE FROM jobs WHERE url IN ({','.join('?'*len(urls))})", urls)
+                conn.commit()
+                console.print(f"[green]Deleted {len(rows)} unenriched job(s).[/green]")
+            else:
+                console.print("[yellow]Skipped --no-description.[/yellow]")
+        else:
+            console.print("[green]--no-description: none found.[/green]")
+
+    # ------------------------------------------------------------------
+    # --reset-failed
+    # ------------------------------------------------------------------
+    if reset_failed:
+        rows = conn.execute(
+            "SELECT url, title, site, apply_error FROM jobs "
+            "WHERE apply_attempts = 99 AND applied_at IS NULL "
+            "ORDER BY title",
+        ).fetchall()
+        if rows:
+            _show_table(
+                [(r[2], r[3], r[1]) for r in rows],
+                ["Site", "Failure Reason", "Title"],
+                "Permanently failed apply jobs",
+            )
+            console.print(f"{len(rows)} job(s) to reopen.")
+            if _confirm(f"Reset {len(rows)} failed job(s) for retry?"):
+                conn.execute(
+                    "UPDATE jobs SET apply_status=NULL, apply_error=NULL, apply_attempts=0 "
+                    "WHERE apply_attempts=99 AND applied_at IS NULL",
+                )
+                conn.commit()
+                console.print(f"[green]Reset {len(rows)} job(s). They will re-enter the apply queue.[/green]")
+            else:
+                console.print("[yellow]Skipped --reset-failed.[/yellow]")
+        else:
+            console.print("[green]--reset-failed: no permanently failed jobs found.[/green]")
+
+    # ------------------------------------------------------------------
+    # --reset-stuck
+    # ------------------------------------------------------------------
+    if reset_stuck:
+        rows = conn.execute(
+            "SELECT url, title, site, last_attempted_at FROM jobs "
+            "WHERE apply_status = 'in_progress' ORDER BY last_attempted_at",
+        ).fetchall()
+        if rows:
+            _show_table(
+                [(r[2], r[3][:16] if r[3] else "?", r[1]) for r in rows],
+                ["Site", "Last Attempt", "Title"],
+                "Stuck in-progress jobs",
+            )
+            console.print(f"{len(rows)} job(s) to unstick.")
+            if _confirm(f"Clear in_progress status for {len(rows)} job(s)?"):
+                conn.execute(
+                    "UPDATE jobs SET apply_status=NULL, agent_id=NULL "
+                    "WHERE apply_status='in_progress'",
+                )
+                conn.commit()
+                console.print(f"[green]Unstuck {len(rows)} job(s). They will re-enter the apply queue.[/green]")
+            else:
+                console.print("[yellow]Skipped --reset-stuck.[/yellow]")
+        else:
+            console.print("[green]--reset-stuck: no stuck jobs found.[/green]")
+
+    # ------------------------------------------------------------------
+    # --reset-scores
+    # ------------------------------------------------------------------
+    if reset_scores:
+        count = conn.execute("SELECT COUNT(*) FROM jobs WHERE fit_score IS NOT NULL").fetchone()[0]
+        if count:
+            console.print(f"\n[yellow]--reset-scores: {count} scored job(s) will have their scores cleared.[/yellow]")
+            if _confirm(f"Clear scores for all {count} job(s)?"):
+                conn.execute(
+                    "UPDATE jobs SET fit_score=NULL, score_reasoning=NULL, scored_at=NULL, "
+                    "previous_score=NULL, location_eligible=NULL WHERE fit_score IS NOT NULL",
+                )
+                conn.commit()
+                console.print(f"[green]Cleared scores for {count} job(s). Run 'applypilot run score' to re-score.[/green]")
+            else:
+                console.print("[yellow]Skipped --reset-scores.[/yellow]")
+        else:
+            console.print("[green]--reset-scores: no scored jobs found.[/green]")
+
+
+@app.command()
 def dashboard() -> None:
-    """Generate and open the HTML dashboard in your browser."""
+    """Start the interactive dashboard in your browser.
+
+    Generates the dashboard HTML, starts a local HTTP server on a random
+    port, and opens the browser. The dashboard stays live until you press
+    Ctrl+C.
+
+    While running, each job card has a Reject button that permanently
+    removes the job from your pipeline (marks it failed) without leaving
+    the browser.
+    """
     _bootstrap()
 
     from applypilot.view import open_dashboard
@@ -390,7 +1032,8 @@ def doctor() -> None:
         model = os.environ.get("LLM_MODEL", "gpt-4o-mini")
         results.append(("LLM API key", ok_mark, f"OpenAI ({model})"))
     elif has_local:
-        results.append(("LLM API key", ok_mark, f"Local: {os.environ.get('LLM_URL')}"))
+        local_models = os.environ.get("LLM_LOCAL_MODELS", os.environ.get("LLM_MODEL", "local-model"))
+        results.append(("LLM (local)", ok_mark, f"URL: {os.environ.get('LLM_URL')}  models: {local_models}"))
     else:
         results.append(("LLM API key", fail_mark,
                         "Set GEMINI_API_KEY in ~/.applypilot/.env (run 'applypilot init')"))

@@ -110,11 +110,17 @@ def _run_enrich(workers: int = 1) -> dict:
         return {"status": f"error: {e}"}
 
 
-def _run_score() -> dict:
+def _run_score(
+    rescore: bool = False,
+    limit: int = 0,
+    rescore_protect: bool = True,
+    min_score: int = 7,
+) -> dict:
     """Stage: LLM scoring — assign fit scores 1-10."""
     try:
         from applypilot.scoring.scorer import run_scoring
-        run_scoring()
+        run_scoring(rescore=rescore, limit=limit,
+                    rescore_protect=rescore_protect, min_score=min_score)
         return {"status": "ok"}
     except Exception as e:
         log.error("Scoring failed: %s", e)
@@ -262,6 +268,9 @@ def _run_stage_streaming(
     min_score: int = 7,
     workers: int = 1,
     validation_mode: str = "normal",
+    rescore: bool = False,
+    limit: int = 0,
+    rescore_protect: bool = True,
 ) -> None:
     """Run a single stage in streaming mode: loop until upstream done + no work.
 
@@ -274,6 +283,11 @@ def _run_stage_streaming(
     if stage in ("tailor", "cover"):
         kwargs["min_score"] = min_score
         kwargs["validation_mode"] = validation_mode
+    if stage == "score":
+        kwargs["rescore"] = rescore
+        kwargs["limit"] = limit
+        kwargs["rescore_protect"] = rescore_protect
+        kwargs["min_score"] = min_score
     if stage in ("discover", "enrich"):
         kwargs["workers"] = workers
 
@@ -324,7 +338,9 @@ def _run_stage_streaming(
 # ---------------------------------------------------------------------------
 
 def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
-                    validation_mode: str = "normal") -> dict:
+                    validation_mode: str = "normal",
+                    rescore: bool = False, limit: int = 0,
+                    rescore_protect: bool = True) -> dict:
     """Execute stages one at a time (original behavior)."""
     results: list[dict] = []
     errors: dict[str, str] = {}
@@ -345,6 +361,11 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
             if name in ("tailor", "cover"):
                 kwargs["min_score"] = min_score
                 kwargs["validation_mode"] = validation_mode
+            if name == "score":
+                kwargs["rescore"] = rescore
+                kwargs["limit"] = limit
+                kwargs["rescore_protect"] = rescore_protect
+                kwargs["min_score"] = min_score
             if name in ("discover", "enrich"):
                 kwargs["workers"] = workers
             result = runner(**kwargs)
@@ -378,7 +399,9 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
 
 
 def _run_streaming(ordered: list[str], min_score: int, workers: int = 1,
-                   validation_mode: str = "normal") -> dict:
+                   validation_mode: str = "normal",
+                   rescore: bool = False, limit: int = 0,
+                   rescore_protect: bool = True) -> dict:
     """Execute stages concurrently with DB as conveyor belt."""
     tracker = _StageTracker()
     stop_event = threading.Event()
@@ -400,7 +423,7 @@ def _run_streaming(ordered: list[str], min_score: int, workers: int = 1,
         start_times[name] = time.time()
         t = threading.Thread(
             target=_run_stage_streaming,
-            args=(name, tracker, stop_event, min_score, workers, validation_mode),
+            args=(name, tracker, stop_event, min_score, workers, validation_mode, rescore, limit, rescore_protect),
             name=f"stage-{name}",
             daemon=True,
         )
@@ -448,6 +471,9 @@ def run_pipeline(
     stream: bool = False,
     workers: int = 1,
     validation_mode: str = "normal",
+    rescore: bool = False,
+    limit: int = 0,
+    rescore_protect: bool = True,
 ) -> dict:
     """Run pipeline stages.
 
@@ -498,10 +524,14 @@ def run_pipeline(
     # Execute
     if stream:
         result = _run_streaming(ordered, min_score, workers=workers,
-                                validation_mode=validation_mode)
+                                validation_mode=validation_mode,
+                                rescore=rescore, limit=limit,
+                                rescore_protect=rescore_protect)
     else:
         result = _run_sequential(ordered, min_score, workers=workers,
-                                 validation_mode=validation_mode)
+                                 validation_mode=validation_mode,
+                                 rescore=rescore, limit=limit,
+                                 rescore_protect=rescore_protect)
 
     # Summary table
     console.print(f"\n{'=' * 70}")

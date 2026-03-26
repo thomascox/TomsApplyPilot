@@ -89,29 +89,35 @@ def _load_location_config(search_cfg: dict) -> tuple[list[str], list[str]]:
 def _location_ok(location: str | None, accept: list[str], reject: list[str]) -> bool:
     """Check if a job location passes the user's location filter.
 
-    Remote jobs are always accepted. Non-remote jobs must match an accept
-    pattern and not match a reject pattern.
+    Evaluation order (mirrors workday._location_ok — keep them in sync):
+    1. Reject patterns are checked FIRST — before the "remote" short-circuit.
+       This ensures "Remote India" or "Remote Germany" are caught when those
+       countries are in the reject list, rather than slipping through as "remote".
+    2. If the location contains a global-remote indicator and no reject matched,
+       it is considered eligible.
+    3. Accept patterns handle non-remote locations in the user's target area.
+    4. Anything else is rejected.
     """
     if not location:
-        return True  # unknown location -- keep it, let scorer decide
+        return True  # unknown location — keep it, let scorer decide
 
     loc = location.lower()
 
-    # Remote jobs always OK
-    if any(r in loc for r in ("remote", "anywhere", "work from home", "wfh", "distributed")):
-        return True
-
-    # Reject non-remote matches
+    # Reject patterns take priority — checked before the remote short-circuit.
     for r in reject:
         if r.lower() in loc:
             return False
 
-    # Accept matches
+    # Fully remote (no geographic restriction) is eligible.
+    if any(r in loc for r in ("remote", "anywhere", "work from home", "wfh", "distributed")):
+        return True
+
+    # Non-remote: accept only if the location matches the user's target area.
     for a in accept:
         if a.lower() in loc:
             return True
 
-    # No match -- reject unknown
+    # No match — reject unknown non-remote location.
     return False
 
 
@@ -124,8 +130,8 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str) -> tup
     existing = 0
 
     for _, row in df.iterrows():
-        url = str(row.get("job_url", ""))
-        if not url or url == "nan":
+        url = str(row.get("job_url", "") or "").strip()
+        if not url or url.lower() in ("nan", "none", "null", "") or not url.startswith("http"):
             continue
 
         title = str(row.get("title", "")) if str(row.get("title", "")) != "nan" else None
@@ -166,13 +172,26 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str) -> tup
         # Extract apply URL if JobSpy provided it
         apply_url = str(row.get("job_url_direct", "")) if str(row.get("job_url_direct", "")) != "nan" else None
 
+        # Extract posted date if JobSpy provided it (may be a date/datetime or string)
+        raw_date = row.get("date_posted")
+        posted_date: str | None = None
+        if raw_date is not None and str(raw_date) not in ("nan", "None", "NaT", ""):
+            try:
+                if hasattr(raw_date, "strftime"):
+                    posted_date = raw_date.strftime("%Y-%m-%d")
+                else:
+                    from datetime import date as _date
+                    posted_date = str(raw_date)[:10]  # ISO prefix
+            except Exception:
+                pass
+
         try:
             conn.execute(
                 "INSERT INTO jobs (url, title, salary, description, location, site, strategy, discovered_at, "
-                "full_description, application_url, detail_scraped_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "full_description, application_url, detail_scraped_at, posted_date) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (url, title, salary, description, location_str, site_label, strategy, now,
-                 full_description, apply_url, detail_scraped_at),
+                 full_description, apply_url, detail_scraped_at, posted_date),
             )
             new += 1
         except sqlite3.IntegrityError:

@@ -123,12 +123,17 @@ def validate_json_fields(data: dict, profile: dict, mode: str = "normal") -> dic
     # Collect all text for bulk checks
     all_text_parts: list[str] = [data["summary"]]
 
-    # Skills: check for fabrication (always enforced)
+    # Skills: check for fabrication (always enforced).
+    # Skip watchlist items the user actually has in their profile -- a skill
+    # cannot be "fabricated" if it is listed in skills_boundary.
+    profile_skills = _build_skills_set(profile)
     if isinstance(data["skills"], dict):
         skills_text = " ".join(str(v) for v in data["skills"].values()).lower()
         for fake in FABRICATION_WATCHLIST:
             if len(fake) <= 2:
                 continue
+            if fake in profile_skills:
+                continue  # skill is real for this user -- not a fabrication
             if fake in skills_text:
                 errors.append(f"Fabricated skill: '{fake}'")
 
@@ -242,7 +247,9 @@ def validate_tailored_resume(text: str, profile: dict, original_text: str = "") 
     if phone and phone not in text:
         warnings.append("Phone missing -- will be injected")
 
-    # 7. Scan TECHNICAL SKILLS section for fabricated tools
+    # 7. Scan TECHNICAL SKILLS section for fabricated tools.
+    # Skip watchlist items the user actually has in their profile.
+    profile_skills = _build_skills_set(profile)
     skills_start = text_lower.find("technical skills")
     skills_end = text_lower.find("experience", skills_start) if skills_start != -1 else -1
     if skills_start != -1 and skills_end != -1:
@@ -250,15 +257,20 @@ def validate_tailored_resume(text: str, profile: dict, original_text: str = "") 
         for fake in FABRICATION_WATCHLIST:
             if len(fake) <= 2:
                 continue
+            if fake in profile_skills:
+                continue  # skill is real for this user -- not a fabrication
             if fake in skills_block:
                 errors.append(f"FABRICATED SKILL in Technical Skills: '{fake}'")
 
-    # 8. Scan full document for fabrication watchlist items not in original
+    # 8. Scan full document for fabrication watchlist items not in original.
+    # Skip watchlist items the user actually has in their profile.
     if original_text:
         original_lower = original_text.lower()
         for fake in FABRICATION_WATCHLIST:
             if len(fake) <= 2:
                 continue
+            if fake in profile_skills:
+                continue  # skill is real for this user -- not a fabrication
             if fake in text_lower and fake not in original_lower:
                 warnings.append(f"New tool/skill appeared: '{fake}' (not in original)")
 

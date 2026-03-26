@@ -168,6 +168,7 @@ DEFAULTS = {
     "poll_interval": 60,
     "apply_timeout": 300,
     "viewport": "1280x900",
+    "max_job_age_days": 30,
 }
 
 

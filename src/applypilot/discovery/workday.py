@@ -14,7 +14,7 @@ import sqlite3
 import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 
 import yaml
@@ -51,19 +51,34 @@ def _load_location_filter(search_cfg: dict | None = None):
 
 
 def _location_ok(location: str | None, accept: list[str], reject: list[str]) -> bool:
-    """Check if a job location passes the user's location filter."""
+    """Check if a job location passes the user's location filter.
+
+    Evaluation order (important):
+    1. Reject patterns are checked FIRST — before the "remote" short-circuit.
+       This ensures "Remote India" or "Remote Germany" are caught when those
+       countries are in the reject list, rather than slipping through as "remote".
+    2. If the location contains a global-remote indicator ("remote", "anywhere",
+       etc.) and no reject pattern matched, it is considered eligible.
+    3. Accept patterns handle non-remote locations in the user's target area.
+    4. Anything else is rejected.
+    """
     if not location:
         return True
 
     loc = location.lower()
 
-    if any(r in loc for r in ("remote", "anywhere", "work from home", "wfh", "distributed")):
-        return True
-
+    # Reject patterns take priority — checked before the remote short-circuit.
+    # This catches country-specific "remote" postings like "Remote India" or
+    # "Remote Germany" that are not actually open to US-based candidates.
     for r in reject:
         if r.lower() in loc:
             return False
 
+    # Fully remote (no geographic restriction) is eligible.
+    if any(r in loc for r in ("remote", "anywhere", "work from home", "wfh", "distributed")):
+        return True
+
+    # Non-remote: accept only if the location matches the user's target area.
     for a in accept:
         if a.lower() in loc:
             return True
@@ -184,6 +199,61 @@ def workday_detail(employer: dict, external_path: str) -> dict:
         return json.loads(resp.read())
 
 
+# -- Date helpers ------------------------------------------------------------
+
+def _parse_workday_date(posted_str: str) -> datetime | None:
+    """Parse a Workday postedOn string into a UTC datetime.
+
+    Handles formats observed in the wild:
+      - ISO 8601:   "2026-03-22T00:00:00.000Z"  /  "2026-03-22"
+      - US date:    "03/22/2026"  (with or without "Posted " prefix)
+      - Relative:   "Posted 30+ Days Ago"  ->  treated as 30 days ago
+    Returns None if the string cannot be parsed.
+    """
+    if not posted_str:
+        return None
+
+    s = posted_str.strip()
+
+    # Strip common prefix
+    s = re.sub(r"^[Pp]osted\s+", "", s).strip()
+
+    # Relative: "30+ Days Ago", "5 Days Ago", "Today", "Just now"
+    rel = re.match(r"(\d+)\+?\s+[Dd]ays?\s+[Aa]go", s)
+    if rel:
+        return datetime.now(timezone.utc) - timedelta(days=int(rel.group(1)))
+    if re.search(r"[Tt]oday|[Jj]ust\s+[Nn]ow", s):
+        return datetime.now(timezone.utc)
+    if re.search(r"[Yy]esterday", s):
+        return datetime.now(timezone.utc) - timedelta(days=1)
+
+    # ISO 8601
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+
+    # US date MM/DD/YYYY
+    try:
+        return datetime.strptime(s, "%m/%d/%Y").replace(tzinfo=timezone.utc)
+    except ValueError:
+        pass
+
+    return None
+
+
+def _is_too_old(posted_str: str, max_days_old: int) -> bool:
+    """Return True if the posting is older than max_days_old days."""
+    if max_days_old <= 0:
+        return False
+    dt = _parse_workday_date(posted_str)
+    if dt is None:
+        return False  # can't determine age — keep it
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max_days_old)
+    return dt < cutoff
+
+
 # -- Search + paginate -------------------------------------------------------
 
 def search_employer(
@@ -194,8 +264,24 @@ def search_employer(
     max_results: int = 0,
     accept_locs: list[str] | None = None,
     reject_locs: list[str] | None = None,
+    max_days_old: int = 0,
 ) -> list[dict]:
-    """Search an employer, paginate through all results, optionally filter by location."""
+    """Search a single Workday employer, paginate through all results, and filter jobs.
+
+    Args:
+        employer_key:    Unique key for the employer (used in logging).
+        employer:        Employer config dict with name, base_url, tenant, site_id.
+        search_text:     Job search query string.
+        location_filter: If True, filter postings using accept_locs/reject_locs.
+        max_results:     Cap on total results returned (0 = no limit).
+        accept_locs:     Location substrings that must appear for a job to be kept.
+        reject_locs:     Location substrings that cause a job to be rejected.
+        max_days_old:    Reject postings older than this many days (0 = no age filter).
+                         Uses the Workday postedOn field — see _parse_workday_date().
+
+    Returns:
+        List of job dicts with title, url, location, posted_date, and description stub.
+    """
     log.info("%s: searching \"%s\"...", employer["name"], search_text)
 
     all_jobs: list[dict] = []
@@ -221,14 +307,27 @@ def search_employer(
 
         for j in postings:
             loc = j.get("locationsText", "")
+            # Some Workday postings omit locationsText in search results but encode
+            # the location in the URL path, e.g. "/job/United-States-of-America-
+            # Washington-District-of-Columbia/Title_REQ123". Fall back to that so
+            # the location filter is not silently bypassed for blank-location jobs.
+            if not loc:
+                ext = j.get("externalPath", "")
+                m = re.search(r"/job/([^/]+)/", ext)
+                if m:
+                    loc = m.group(1).replace("-", " ")
             if location_filter and accept_locs is not None and reject_locs is not None:
                 if not _location_ok(loc, accept_locs, reject_locs):
                     continue
 
+            posted_str = j.get("postedOn", "")
+            if _is_too_old(posted_str, max_days_old):
+                continue
+
             all_jobs.append({
                 "title": j.get("title", ""),
-                "location": loc,
-                "posted": j.get("postedOn", ""),
+                "location": loc,   # may have been populated from externalPath fallback above
+                "posted": posted_str,
                 "external_path": j.get("externalPath", ""),
                 "employer_key": employer_key,
                 "employer_name": employer["name"],
@@ -324,13 +423,17 @@ def store_results(conn: sqlite3.Connection, jobs: list[dict], employers: dict) -
         site = job.get("employer_name", "Corporate")
         strategy = "workday_api"
 
+        # Parse posted date to ISO format for storage
+        posted_dt = _parse_workday_date(job.get("posted", ""))
+        posted_date = posted_dt.strftime("%Y-%m-%d") if posted_dt else None
+
         try:
             conn.execute(
                 "INSERT INTO jobs (url, title, salary, description, location, site, strategy, "
-                "discovered_at, full_description, application_url, detail_scraped_at, detail_error) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "discovered_at, full_description, application_url, detail_scraped_at, detail_error, posted_date) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (url, job.get("title"), None, short_desc, job.get("location"),
-                 site, strategy, now, full_description, url, detail_scraped_at, detail_error),
+                 site, strategy, now, full_description, url, detail_scraped_at, detail_error, posted_date),
             )
             new += 1
         except sqlite3.IntegrityError:
@@ -347,6 +450,7 @@ def _process_one(
     location_filter: bool,
     accept_locs: list[str],
     reject_locs: list[str],
+    max_days_old: int = 0,
 ) -> dict:
     """Search one employer, fetch details, store results."""
     emp = employers[employer_key]
@@ -357,6 +461,7 @@ def _process_one(
             location_filter=location_filter,
             accept_locs=accept_locs,
             reject_locs=reject_locs,
+            max_days_old=max_days_old,
         )
     except Exception as e:
         log.error("%s: ERROR searching '%s': %s", emp["name"], search_text, e)
@@ -391,6 +496,7 @@ def scrape_employers(
     accept_locs: list[str] | None = None,
     reject_locs: list[str] | None = None,
     workers: int = 1,
+    max_days_old: int = 0,
 ) -> dict:
     """Run full scrape: search -> filter -> detail -> store.
 
@@ -423,7 +529,7 @@ def scrape_employers(
             futures = {
                 pool.submit(
                     _process_one, key, employers, search_text,
-                    location_filter, accept_locs, reject_locs,
+                    location_filter, accept_locs, reject_locs, max_days_old,
                 ): key
                 for key in valid_keys
             }
@@ -446,7 +552,7 @@ def scrape_employers(
         for key in valid_keys:
             result = _process_one(
                 key, employers, search_text,
-                location_filter, accept_locs, reject_locs,
+                location_filter, accept_locs, reject_locs, max_days_old,
             )
             completed += 1
             total_new += result["new"]
@@ -476,9 +582,13 @@ def run_workday_discovery(employers: dict | None = None, workers: int = 1) -> di
     dict), then loads search queries from the user's search config to run
     a full crawl across all employers.
 
+    Age filtering is controlled by searches.yaml:
+        defaults:
+          max_days_old: 30   # skip Workday postings older than 30 days (0 = no limit)
+
     Args:
         employers: Override the employer registry. If None, loads from YAML.
-        workers: Number of parallel threads for employer scraping. Default 1 (sequential).
+        workers:   Number of parallel threads for employer scraping. Default 1 (sequential).
 
     Returns:
         Dict with stats: found, new, existing, queries.
@@ -511,8 +621,10 @@ def run_workday_discovery(employers: dict | None = None, workers: int = 1) -> di
         setup_proxy(proxy)
 
     location_filter = search_cfg.get("workday_location_filter", True)
+    max_days_old = search_cfg.get("defaults", {}).get("max_days_old", 30)
 
-    log.info("Workday crawl: %d queries x %d employers (workers=%d)", len(queries), len(employers), workers)
+    log.info("Workday crawl: %d queries x %d employers (workers=%d, max_days_old=%d)",
+             len(queries), len(employers), workers, max_days_old)
 
     grand_new = 0
     grand_existing = 0
@@ -527,6 +639,7 @@ def run_workday_discovery(employers: dict | None = None, workers: int = 1) -> di
             accept_locs=accept_locs,
             reject_locs=reject_locs,
             workers=workers,
+            max_days_old=max_days_old,
         )
         grand_new += result["new"]
         grand_existing += result["existing"]
