@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -72,6 +73,188 @@ def _setup_resume() -> None:
                 else:
                     console.print("[yellow]File not found, skipping plain-text copy.[/yellow]")
         break
+
+
+# ---------------------------------------------------------------------------
+# Profile YAML writer
+# ---------------------------------------------------------------------------
+
+def _yaml_str(value: Any) -> str:
+    """Render a scalar value as a safe YAML string.
+
+    Quotes strings that contain special YAML characters, look like booleans,
+    or are purely numeric (to preserve the string type when round-tripped).
+    """
+    if value is None or value == "":
+        return '""'
+    s = str(value)
+    # Detect numeric strings — quote so YAML parses them back as strings
+    is_numeric = False
+    try:
+        float(s)
+        is_numeric = True
+    except ValueError:
+        pass
+    needs_quote = (
+        is_numeric
+        or any(c in s for c in (':', '#', '{', '}', '[', ']', ',', '&', '*', '?', '|', '>', '!', "'", '"', '%', '@', '`'))
+        or s.lower() in ("true", "false", "yes", "no", "null")
+    )
+    if needs_quote:
+        escaped = s.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    return s
+
+
+def _yaml_list(items: list, indent: int = 4) -> str:
+    """Render a list as YAML block sequence lines (no trailing newline).
+
+    Default indent of 4 matches keys nested at 2-space section indent.
+    """
+    pad = " " * indent
+    if not items:
+        return "[]"
+    return "\n" + "".join(f"{pad}- {_yaml_str(item)}\n" for item in items).rstrip("\n")
+
+
+def _build_profile_yaml(p: dict) -> str:
+    """Build a fully-commented profile.yaml string from a profile dict."""
+    personal = p.get("personal", {})
+    wa = p.get("work_authorization", {})
+    comp = p.get("compensation", {})
+    exp = p.get("experience", {})
+    skills = p.get("skills_boundary", {})
+    facts = p.get("resume_facts", {})
+    cf = p.get("career_focus")
+    eeo = p.get("eeo_voluntary", {})
+    avail = p.get("availability", {})
+
+    lines: list[str] = [
+        "# ApplyPilot Profile",
+        "# Edit this file directly — comments explain each field.",
+        "# Re-run 'applypilot init' to regenerate it.",
+        "",
+        "# ── Personal ─────────────────────────────────────────────────────────────────",
+        "# Used for application form auto-fill and cover letter salutations.",
+        "personal:",
+        f"  full_name: {_yaml_str(personal.get('full_name', ''))}",
+        f"  preferred_name: {_yaml_str(personal.get('preferred_name', ''))}   # First name or nickname used in cover letters",
+        f"  email: {_yaml_str(personal.get('email', ''))}",
+        f"  phone: {_yaml_str(personal.get('phone', ''))}",
+        f"  city: {_yaml_str(personal.get('city', ''))}",
+        f"  province_state: {_yaml_str(personal.get('province_state', ''))}",
+        f"  country: {_yaml_str(personal.get('country', ''))}",
+        f"  postal_code: {_yaml_str(personal.get('postal_code', ''))}",
+        f"  address: {_yaml_str(personal.get('address', ''))}   # Street address (optional, for form auto-fill)",
+        f"  linkedin_url: {_yaml_str(personal.get('linkedin_url', ''))}",
+        f"  github_url: {_yaml_str(personal.get('github_url', ''))}",
+        f"  portfolio_url: {_yaml_str(personal.get('portfolio_url', ''))}",
+        f"  website_url: {_yaml_str(personal.get('website_url', ''))}",
+        f"  password: {_yaml_str(personal.get('password', ''))}   # Job-site password used during auto-apply login",
+        "",
+        "# ── Work Authorization ────────────────────────────────────────────────────────",
+        "work_authorization:",
+        f"  legally_authorized_to_work: {str(wa.get('legally_authorized_to_work', True)).lower()}",
+        f"  require_sponsorship: {str(wa.get('require_sponsorship', False)).lower()}",
+        f"  work_permit_type: {_yaml_str(wa.get('work_permit_type', ''))}   # e.g. Citizen, PR, Open Work Permit, H-1B, TN",
+        "",
+        "# ── Compensation ─────────────────────────────────────────────────────────────",
+        "# Used to filter jobs and answer salary questions during auto-apply.",
+        "compensation:",
+        f"  salary_expectation: {_yaml_str(comp.get('salary_expectation', ''))}",
+        f"  salary_currency: {_yaml_str(comp.get('salary_currency', 'USD'))}",
+        f"  salary_range_min: {_yaml_str(comp.get('salary_range_min', ''))}",
+        f"  salary_range_max: {_yaml_str(comp.get('salary_range_max', ''))}",
+        "",
+        "# ── Experience ───────────────────────────────────────────────────────────────",
+        "experience:",
+        f"  years_of_experience_total: {_yaml_str(exp.get('years_of_experience_total', ''))}",
+        f"  education_level: {_yaml_str(exp.get('education_level', ''))}   # e.g. High School, Associates, Bachelor's, Master's, PhD",
+        f"  current_title: {_yaml_str(exp.get('current_title', ''))}",
+        f"  target_role: {_yaml_str(exp.get('target_role', ''))}",
+        "",
+        "# ── Skills Boundary ──────────────────────────────────────────────────────────",
+        "# The outer boundary of skills you genuinely possess.",
+        "# The AI uses this list to keep tailored resumes honest — it will only use",
+        "# skills listed here. Add everything you know, even if rusty or historical.",
+        "skills_boundary:",
+        f"  programming_languages: {_yaml_list(skills.get('programming_languages', []))}",
+        f"  frameworks: {_yaml_list(skills.get('frameworks', []))}",
+        f"  tools: {_yaml_list(skills.get('tools', []))}",
+        "",
+        "# ── Resume Facts ─────────────────────────────────────────────────────────────",
+        "# Hard facts the AI must never change, invent, or omit during tailoring.",
+        "resume_facts:",
+        f"  preserved_companies: {_yaml_list(facts.get('preserved_companies', []))}   # Exact company names as they appear on your resume",
+        f"  preserved_projects: {_yaml_list(facts.get('preserved_projects', []))}    # Project names to always keep",
+        f"  preserved_school: {_yaml_str(facts.get('preserved_school', ''))}",
+        f"  real_metrics: {_yaml_list(facts.get('real_metrics', []))}   # Verified numbers only (e.g. \"99.9% uptime\", \"50k users\")",
+    ]
+
+    # Career focus — only if present
+    if cf:
+        lines += [
+            "",
+            "# ── Career Focus ─────────────────────────────────────────────────────────────",
+            "# Fill this in if your career has shifted direction in recent years.",
+            "# Helps the AI scorer weight your roles correctly.",
+            "#",
+            "# PRIMARY skills   — what you actively do day-to-day right now.",
+            "#                   These drive your score up for matching roles.",
+            "# SECONDARY skills — real parts of your background, but no longer your",
+            "#                   daily focus. Historical experience you have moved on from.",
+            "#                   These may add context but should not drive a score up.",
+            "#",
+            "# Scoring effect: if a job's core duties centre on your secondary skills,",
+            "# the AI subtracts 2-3 points from its initial score to preserve relative",
+            "# signal (a 9 becomes ~6-7, not a hard cap). Roles matching your primary",
+            "# skills or target roles score normally.",
+            "#",
+            "# Remove this entire block if your current work already matches your targets.",
+            "career_focus:",
+            f"  target_roles: {_yaml_list(cf.get('target_roles', []))}",
+            f"  primary_skills: {_yaml_list(cf.get('primary_skills', []))}",
+            f"  secondary_skills: {_yaml_list(cf.get('secondary_skills', []))}",
+            f"  career_note: {_yaml_str(cf.get('career_note', ''))}",
+        ]
+    else:
+        lines += [
+            "",
+            "# ── Career Focus (optional) ──────────────────────────────────────────────────",
+            "# Uncomment and fill in if your career has shifted direction in recent years.",
+            "# See 'applypilot init' or the README for full explanation.",
+            "#",
+            "# career_focus:",
+            "#   target_roles:",
+            "#     - Engineering Manager",
+            "#     - Director of Product",
+            "#   primary_skills:",
+            "#     - team leadership",
+            "#     - roadmap planning",
+            "#   secondary_skills:",
+            "#     - Python",
+            "#     - hands-on coding",
+            "#   career_note: \"Moved from IC engineering to leadership around 2020\"",
+        ]
+
+    lines += [
+        "",
+        "# ── EEO Voluntary ────────────────────────────────────────────────────────────",
+        "# Optional self-identification for Equal Employment Opportunity forms.",
+        "# Always voluntary — change any value or leave as \"Decline to self-identify\".",
+        "eeo_voluntary:",
+        f"  gender: {_yaml_str(eeo.get('gender', 'Decline to self-identify'))}",
+        f"  race_ethnicity: {_yaml_str(eeo.get('race_ethnicity', 'Decline to self-identify'))}",
+        f"  veteran_status: {_yaml_str(eeo.get('veteran_status', 'Decline to self-identify'))}",
+        f"  disability_status: {_yaml_str(eeo.get('disability_status', 'Decline to self-identify'))}",
+        "",
+        "# ── Availability ─────────────────────────────────────────────────────────────",
+        "availability:",
+        f"  earliest_start_date: {_yaml_str(avail.get('earliest_start_date', 'Immediately'))}   # e.g. Immediately, 2 weeks notice, 2025-06-01",
+        "",
+    ]
+
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +383,7 @@ def _setup_profile() -> dict:
         }
         console.print("[green]Career focus saved — the scorer will apply recency weighting.[/green]")
     else:
-        console.print("[dim]Skipped. You can add a career_focus block to profile.json manually later.[/dim]")
+        console.print("[dim]Skipped. You can add a career_focus block to profile.yaml manually later (see the commented example in the file).[/dim]")
 
     # -- EEO Voluntary (defaults) --
     profile["eeo_voluntary"] = {
@@ -215,8 +398,8 @@ def _setup_profile() -> dict:
         "earliest_start_date": Prompt.ask("Earliest start date", default="Immediately"),
     }
 
-    # Save
-    PROFILE_PATH.write_text(json.dumps(profile, indent=2, ensure_ascii=False), encoding="utf-8")
+    # Save as YAML with inline comments
+    PROFILE_PATH.write_text(_build_profile_yaml(profile), encoding="utf-8")
     console.print(f"\n[green]Profile saved to {PROFILE_PATH}[/green]")
     return profile
 

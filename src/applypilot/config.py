@@ -10,7 +10,8 @@ APP_DIR = Path(os.environ.get("APPLYPILOT_DIR", Path.home() / ".applypilot"))
 
 # Core paths
 DB_PATH = APP_DIR / "applypilot.db"
-PROFILE_PATH = APP_DIR / "profile.json"
+PROFILE_PATH = APP_DIR / "profile.yaml"
+_PROFILE_JSON_PATH = APP_DIR / "profile.json"  # legacy fallback
 RESUME_PATH = APP_DIR / "resume.txt"
 RESUME_PDF_PATH = APP_DIR / "resume.pdf"
 SEARCH_CONFIG_PATH = APP_DIR / "searches.yaml"
@@ -92,13 +93,25 @@ def ensure_dirs():
 
 
 def load_profile() -> dict:
-    """Load user profile from ~/.applypilot/profile.json."""
-    import json
-    if not PROFILE_PATH.exists():
-        raise FileNotFoundError(
-            f"Profile not found at {PROFILE_PATH}. Run `applypilot init` first."
-        )
-    return json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
+    """Load user profile from ~/.applypilot/profile.yaml (or legacy profile.json).
+
+    YAML is the current format and supports inline comments for hand-editing.
+    If profile.yaml does not exist but the legacy profile.json does, the JSON
+    is loaded transparently so existing installs keep working.
+    """
+    import yaml
+
+    if PROFILE_PATH.exists():
+        return yaml.safe_load(PROFILE_PATH.read_text(encoding="utf-8")) or {}
+
+    # Legacy fallback: profile.json (created before the YAML migration)
+    if _PROFILE_JSON_PATH.exists():
+        import json
+        return json.loads(_PROFILE_JSON_PATH.read_text(encoding="utf-8"))
+
+    raise FileNotFoundError(
+        f"Profile not found at {PROFILE_PATH}. Run `applypilot init` first."
+    )
 
 
 def load_search_config() -> dict:
