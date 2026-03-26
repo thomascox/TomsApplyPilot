@@ -227,17 +227,25 @@ def _setup_profile() -> dict:
 
 def _setup_searches() -> None:
     """Generate a searches.yaml from user input."""
-    console.print(Panel("[bold]Step 3: Job Search Config[/bold]\nDefine what you're looking for."))
+    console.print(Panel(
+        "[bold]Step 3: Job Search Config[/bold]\n"
+        "Define what you're looking for. Two search strategies are configured:\n"
+        "  • US-wide remote search (catches fully-remote postings nationwide)\n"
+        "  • Local city search (catches hybrid/onsite roles near you)"
+    ))
 
-    location = Prompt.ask("Target location (e.g. 'Remote', 'Canada', 'New York, NY')", default="Remote")
-    distance_str = Prompt.ask("Search radius in miles (0 for remote-only)", default="0")
+    local_city = Prompt.ask(
+        "Your city and state for local/hybrid search (e.g. 'Orlando, FL')",
+        default="",
+    )
+    distance_str = Prompt.ask("Local search radius in miles", default="25")
     try:
         distance = int(distance_str)
     except ValueError:
-        distance = 0
+        distance = 25
 
     roles_raw = Prompt.ask(
-        "Target job titles (comma-separated, e.g. 'Backend Engineer, Full Stack Developer')"
+        "Target job titles (comma-separated, e.g. 'Project Manager, Product Manager')"
     )
     roles = [r.strip() for r in roles_raw.split(",") if r.strip()]
 
@@ -245,29 +253,59 @@ def _setup_searches() -> None:
         console.print("[yellow]No roles provided. Using a default set.[/yellow]")
         roles = ["Software Engineer"]
 
+    # Location entries: always include US-wide remote; add local if provided.
+    location_entries = ['  - location: "United States"\n    remote: true']
+    if local_city:
+        location_entries.append(f'  - location: "{local_city}"\n    remote: false')
+
     # Build YAML content
     lines = [
         "# ApplyPilot search configuration",
         "# Edit this file to refine your job search queries.",
         "",
         "defaults:",
-        f'  location: "{location}"',
+        '  location: "United States"',
         f"  distance: {distance}",
         "  hours_old: 72",
         "  results_per_site: 50",
         "",
-        "locations:",
-        f'  - location: "{location}"',
-        f"    remote: {str(distance == 0).lower()}",
+        "# location_accept: substrings that make a non-remote location eligible.",
+        "# Leave empty if you only want remote jobs (most common).",
+        "# Example: ['Orlando', 'Florida'] would allow hybrid Orlando roles.",
+        "location_accept: []",
         "",
-        "queries:",
+        "# location_reject_non_remote: substrings that permanently reject a location.",
+        "# Checked BEFORE the remote short-circuit, so 'Remote India' is caught.",
+        "# Add any countries/regions you are NOT eligible to work in.",
+        "location_reject_non_remote:",
+        '  - "india"',
+        '  - "canada"',
+        '  - "germany"',
+        '  - "france"',
+        '  - "united kingdom"',
+        '  - "australia"',
+        '  - "brazil"',
+        '  - "mexico"',
+        '  - "japan"',
+        '  - "emea"',
+        '  - "apac"',
+        '  - "latam"',
+        '  - "teletravail"',
+        "",
+        "locations:",
     ]
+    lines.extend(location_entries)
+    lines += ["", "queries:"]
     for i, role in enumerate(roles):
         lines.append(f'  - query: "{role}"')
         lines.append(f"    tier: {min(i + 1, 3)}")
 
     SEARCH_CONFIG_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
     console.print(f"[green]Search config saved to {SEARCH_CONFIG_PATH}[/green]")
+    console.print(
+        "[dim]Tip: edit location_reject_non_remote in searches.yaml to add any other "
+        "countries/regions you cannot work in.[/dim]"
+    )
 
 
 # ---------------------------------------------------------------------------
