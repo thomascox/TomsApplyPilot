@@ -229,15 +229,30 @@ def _setup_searches() -> None:
     """Generate a searches.yaml from user input."""
     console.print(Panel(
         "[bold]Step 3: Job Search Config[/bold]\n"
-        "Define what you're looking for. Two search strategies are configured:\n"
-        "  • US-wide remote search (catches fully-remote postings nationwide)\n"
-        "  • Local city search (catches hybrid/onsite roles near you)"
+        "Configure where to search. You can combine:\n"
+        "  • US-wide remote search (fully-remote postings nationwide)\n"
+        "  • One or more local cities (hybrid/onsite roles near you)"
     ))
 
-    local_city = Prompt.ask(
-        "Your city and state for local/hybrid search (e.g. 'Orlando, FL')",
-        default="",
-    )
+    # Remote search toggle
+    include_remote = Confirm.ask("Include US-wide remote job search?", default=True)
+
+    # Local cities — allow multiple
+    local_cities: list[str] = []
+    console.print("[dim]Add local cities for hybrid/onsite searches. Leave blank to finish.[/dim]")
+    while True:
+        city = Prompt.ask(
+            f"Local city #{len(local_cities) + 1} (e.g. 'Orlando, FL') — blank to skip/finish",
+            default="",
+        )
+        if not city.strip():
+            break
+        local_cities.append(city.strip())
+
+    if not include_remote and not local_cities:
+        console.print("[yellow]No locations configured — defaulting to US-wide remote.[/yellow]")
+        include_remote = True
+
     distance_str = Prompt.ask("Local search radius in miles", default="25")
     try:
         distance = int(distance_str)
@@ -253,10 +268,12 @@ def _setup_searches() -> None:
         console.print("[yellow]No roles provided. Using a default set.[/yellow]")
         roles = ["Software Engineer"]
 
-    # Location entries: always include US-wide remote; add local if provided.
-    location_entries = ['  - location: "United States"\n    remote: true']
-    if local_city:
-        location_entries.append(f'  - location: "{local_city}"\n    remote: false')
+    # Build location entries
+    location_entries: list[str] = []
+    if include_remote:
+        location_entries.append('  - location: "United States"\n    remote: true')
+    for city in local_cities:
+        location_entries.append(f'  - location: "{city}"\n    remote: false')
 
     # Build YAML content
     lines = [
