@@ -774,8 +774,8 @@ def run_tailoring(min_score: int = 7, limit: int = 20,
                                              validation_mode=validation_mode)
 
             # Build safe filename prefix
-            safe_title = re.sub(r"[^\w\s-]", "", job["title"])[:50].strip().replace(" ", "_")
-            safe_site = re.sub(r"[^\w\s-]", "", job["site"])[:20].strip().replace(" ", "_")
+            safe_title = re.sub(r"[^\w\s-]", "", job.get("title") or "")[:50].strip().replace(" ", "_")
+            safe_site = re.sub(r"[^\w\s-]", "", job.get("site") or "")[:20].strip().replace(" ", "_")
             prefix = f"{safe_site}_{safe_title}"
 
             # Save tailored resume text
@@ -826,7 +826,7 @@ def run_tailoring(min_score: int = 7, limit: int = 20,
                 "%d/%d [ERROR] %s\n"
                 "  Exception: %s\n"
                 "  Run with --verbose / set log level to DEBUG for the full traceback.",
-                completed, len(jobs), job["title"][:40], e,
+                completed, len(jobs), (job.get("title") or "?")[:40], e,
                 exc_info=log.isEnabledFor(logging.DEBUG),
             )
 
@@ -841,7 +841,7 @@ def run_tailoring(min_score: int = 7, limit: int = 20,
             result["status"].upper(),
             result.get("attempts", "?"),
             rate * 60,
-            result["title"][:40],
+            (result.get("title") or "?")[:40],
         )
 
     # Persist to DB: increment attempt counter for ALL, save path only for approved

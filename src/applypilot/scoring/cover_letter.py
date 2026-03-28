@@ -238,8 +238,8 @@ def run_cover_letters(min_score: int = 7, limit: int = 20,
                                           validation_mode=validation_mode)
 
             # Build safe filename prefix
-            safe_title = re.sub(r"[^\w\s-]", "", job["title"])[:50].strip().replace(" ", "_")
-            safe_site = re.sub(r"[^\w\s-]", "", job["site"])[:20].strip().replace(" ", "_")
+            safe_title = re.sub(r"[^\w\s-]", "", job.get("title") or "")[:50].strip().replace(" ", "_")
+            safe_site = re.sub(r"[^\w\s-]", "", job.get("site") or "")[:20].strip().replace(" ", "_")
             prefix = f"{safe_site}_{safe_title}"
 
             cl_path = COVER_LETTER_DIR / f"{prefix}_CL.txt"
@@ -266,7 +266,7 @@ def run_cover_letters(min_score: int = 7, limit: int = 20,
             rate = completed / elapsed if elapsed > 0 else 0
             log.info(
                 "%d/%d [OK] | %.1f jobs/min | %s",
-                completed, len(jobs), rate * 60, result["title"][:40],
+                completed, len(jobs), rate * 60, (result.get("title") or "?")[:40],
             )
         except Exception as e:
             result = {
@@ -275,7 +275,7 @@ def run_cover_letters(min_score: int = 7, limit: int = 20,
             }
             error_count += 1
             results.append(result)
-            log.error("%d/%d [ERROR] %s -- %s", completed, len(jobs), job["title"][:40], e)
+            log.error("%d/%d [ERROR] %s -- %s", completed, len(jobs), (job.get("title") or "?")[:40], e)
 
     # Persist to DB: increment attempt counter for ALL, save path only for successes
     now = datetime.now(timezone.utc).isoformat()

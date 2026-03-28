@@ -302,7 +302,7 @@ def gen_prompt(target_url: str, min_score: int = 7,
     # Write prompt file
     config.ensure_dirs()
     site_slug = (job.get("site") or "unknown")[:20].replace(" ", "_")
-    prompt_file = config.LOG_DIR / f"prompt_{site_slug}_{job['title'][:30].replace(' ', '_')}.txt"
+    prompt_file = config.LOG_DIR / f"prompt_{site_slug}_{(job.get('title') or 'untitled')[:30].replace(' ', '_')}.txt"
     prompt_file.write_text(prompt, encoding="utf-8")
 
     # Write MCP config for reference
@@ -418,7 +418,7 @@ def run_job(job: dict, port: int, worker_id: int = 0,
     update_state(worker_id, status="applying", job_title=job["title"],
                  company=job.get("site", ""), score=job.get("fit_score", 0),
                  start_time=time.time(), actions=0, last_action="starting")
-    add_event(f"[W{worker_id}] Starting: {job['title'][:40]} @ {job.get('site', '')}")
+    add_event(f"[W{worker_id}] Starting: {(job.get('title') or '?')[:40]} @ {job.get('site', '')}")
 
     worker_log = config.LOG_DIR / f"worker-{worker_id}.log"
     ts_header = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -533,7 +533,7 @@ def run_job(job: dict, port: int, worker_id: int = 0,
 
         for result_status in ["APPLIED", "EXPIRED", "CAPTCHA", "LOGIN_ISSUE"]:
             if f"RESULT:{result_status}" in output:
-                add_event(f"[W{worker_id}] {result_status} ({elapsed}s): {job['title'][:30]}")
+                add_event(f"[W{worker_id}] {result_status} ({elapsed}s): {(job.get('title') or '?')[:30]}")
                 update_state(worker_id, status=result_status.lower(),
                              last_action=f"{result_status} ({elapsed}s)")
                 return result_status.lower(), duration_ms
@@ -549,7 +549,7 @@ def run_job(job: dict, port: int, worker_id: int = 0,
                     reason = _clean_reason(reason)
                     PROMOTE_TO_STATUS = {"captcha", "expired", "login_issue"}
                     if reason in PROMOTE_TO_STATUS:
-                        add_event(f"[W{worker_id}] {reason.upper()} ({elapsed}s): {job['title'][:30]}")
+                        add_event(f"[W{worker_id}] {reason.upper()} ({elapsed}s): {(job.get('title') or '?')[:30]}")
                         update_state(worker_id, status=reason,
                                      last_action=f"{reason.upper()} ({elapsed}s)")
                         return reason, duration_ms
@@ -674,7 +674,7 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
 
             if result == "skipped":
                 release_lock(job["url"])
-                add_event(f"[W{worker_id}] Skipped: {job['title'][:30]}")
+                add_event(f"[W{worker_id}] Skipped: {(job.get('title') or '?')[:30]}")
                 continue
             elif result == "applied":
                 mark_result(job["url"], "applied", duration_ms=duration_ms)

@@ -345,7 +345,7 @@ def run_scoring(
             "[%d/%d] score=%d%s%s  %s",
             completed, len(jobs),
             result["score"], rescore_flag, loc_flag,
-            job.get("title", "?")[:60],
+            (job.get("title") or "?")[:60],
         )
 
         # Warn prominently if a previously eligible job dropped below the threshold
