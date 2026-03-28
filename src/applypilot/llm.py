@@ -204,13 +204,34 @@ class LLMClient:
         resp.raise_for_status()
         data = resp.json()
 
-        candidate = data["candidates"][0]
-        text_out = candidate["content"]["parts"][0]["text"]
+        candidates = data.get("candidates") or []
+        if not candidates:
+            raise RuntimeError(
+                f"Gemini returned no candidates. "
+                f"This may be a billing issue or a prompt-level safety block. "
+                f"Response: {data}"
+            )
 
-        # Map Gemini finish reason to normalised form
-        gemini_reason = candidate.get("finishReason", "STOP")
-        finish_reason = "length" if gemini_reason == "MAX_TOKENS" else "stop"
+        candidate = candidates[0]
+        finish_reason_raw = candidate.get("finishReason", "STOP")
 
+        content = candidate.get("content")
+        if content is None:
+            raise RuntimeError(
+                f"Gemini candidate has no content "
+                f"(finishReason: {finish_reason_raw}). "
+                f"The request was likely blocked by a safety filter."
+            )
+
+        parts = content.get("parts") or []
+        if not parts:
+            raise RuntimeError(
+                f"Gemini candidate content has no parts "
+                f"(finishReason: {finish_reason_raw})."
+            )
+
+        text_out = parts[0].get("text") or ""
+        finish_reason = "length" if finish_reason_raw == "MAX_TOKENS" else "stop"
         return text_out, finish_reason
 
     # -- OpenAI-compat API --------------------------------------------------
@@ -260,9 +281,26 @@ class LLMClient:
         """
         resp.raise_for_status()
         data = resp.json()
-        choice = data["choices"][0]
-        text = choice["message"]["content"]
+
+        choices = data.get("choices") or []
+        if not choices:
+            raise RuntimeError(
+                f"LLM returned no choices. "
+                f"This may indicate a content filter block or API error. "
+                f"Response: {data}"
+            )
+
+        choice = choices[0]
         finish_reason = choice.get("finish_reason") or "unknown"
+
+        message = choice.get("message")
+        if message is None:
+            raise RuntimeError(
+                f"LLM choice has no message (finish_reason: {finish_reason}). "
+                f"The response was likely blocked by a content filter."
+            )
+
+        text = message.get("content") or ""
         return text, finish_reason
 
     # -- public API ---------------------------------------------------------
