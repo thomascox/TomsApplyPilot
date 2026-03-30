@@ -302,7 +302,7 @@ def gen_prompt(target_url: str, min_score: int = 7,
     # Write prompt file
     config.ensure_dirs()
     site_slug = (job.get("site") or "unknown")[:20].replace(" ", "_")
-    prompt_file = config.LOG_DIR / f"prompt_{site_slug}_{(job.get('title') or 'untitled')[:30].replace(' ', '_')}.txt"
+    prompt_file = config.LOG_DIR / f"prompt_{site_slug}_{(job.get('title') or '?')[:30].replace(' ', '_')}.txt"
     prompt_file.write_text(prompt, encoding="utf-8")
 
     # Write MCP config for reference
@@ -415,7 +415,7 @@ def run_job(job: dict, port: int, worker_id: int = 0,
 
     worker_dir = reset_worker_dir(worker_id)
 
-    update_state(worker_id, status="applying", job_title=job["title"],
+    update_state(worker_id, status="applying", job_title=job.get("title") or "",
                  company=job.get("site", ""), score=job.get("fit_score", 0),
                  start_time=time.time(), actions=0, last_action="starting")
     add_event(f"[W{worker_id}] Starting: {(job.get('title') or '?')[:40]} @ {job.get('site', '')}")
@@ -424,8 +424,8 @@ def run_job(job: dict, port: int, worker_id: int = 0,
     ts_header = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_header = (
         f"\n{'=' * 60}\n"
-        f"[{ts_header}] {job['title']} @ {job.get('site', '')}\n"
-        f"URL: {job.get('application_url') or job['url']}\n"
+        f"[{ts_header}] {job.get('title') or '?'} @ {job.get('site', '')}\n"
+        f"URL: {job.get('application_url') or job.get('url', 'N/A')}\n"
         f"Score: {job.get('fit_score', 'N/A')}/10\n"
         f"{'=' * 60}\n"
     )

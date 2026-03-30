@@ -7,7 +7,6 @@ profile at runtime. No hardcoded personal information.
 
 import json
 import logging
-import re
 import time
 from datetime import datetime, timezone
 
@@ -17,6 +16,7 @@ from applypilot.llm import get_client
 from applypilot.scoring.validator import (
     BANNED_WORDS,
     LLM_LEAK_PHRASES,
+    safe_job_prefix,
     sanitize_text,
     validate_cover_letter,
 )
@@ -238,9 +238,7 @@ def run_cover_letters(min_score: int = 7, limit: int = 20,
                                           validation_mode=validation_mode)
 
             # Build safe filename prefix
-            safe_title = re.sub(r"[^\w\s-]", "", job.get("title") or "")[:50].strip().replace(" ", "_")
-            safe_site = re.sub(r"[^\w\s-]", "", job.get("site") or "")[:20].strip().replace(" ", "_")
-            prefix = f"{safe_site}_{safe_title}"
+            prefix = safe_job_prefix(job)
 
             cl_path = COVER_LETTER_DIR / f"{prefix}_CL.txt"
             cl_path.write_text(letter, encoding="utf-8")

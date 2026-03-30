@@ -11,7 +11,6 @@ to avoid apologetic spirals.
 
 import json
 import logging
-import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +21,7 @@ from applypilot.llm import get_client
 from applypilot.scoring.validator import (
     BANNED_WORDS,
     FABRICATION_WATCHLIST,
+    safe_job_prefix,
     sanitize_text,
     validate_json_fields,
     validate_tailored_resume,
@@ -774,9 +774,7 @@ def run_tailoring(min_score: int = 7, limit: int = 20,
                                              validation_mode=validation_mode)
 
             # Build safe filename prefix
-            safe_title = re.sub(r"[^\w\s-]", "", job.get("title") or "")[:50].strip().replace(" ", "_")
-            safe_site = re.sub(r"[^\w\s-]", "", job.get("site") or "")[:20].strip().replace(" ", "_")
-            prefix = f"{safe_site}_{safe_title}"
+            prefix = safe_job_prefix(job)
 
             # Save tailored resume text
             txt_path = TAILORED_DIR / f"{prefix}.txt"
@@ -785,11 +783,11 @@ def run_tailoring(min_score: int = 7, limit: int = 20,
             # Save job description for traceability
             job_path = TAILORED_DIR / f"{prefix}_JOB.txt"
             job_desc = (
-                f"Title: {job['title']}\n"
-                f"Company: {job['site']}\n"
+                f"Title: {job.get('title') or 'N/A'}\n"
+                f"Company: {job.get('site') or 'N/A'}\n"
                 f"Location: {job.get('location', 'N/A')}\n"
                 f"Score: {job.get('fit_score', 'N/A')}\n"
-                f"URL: {job['url']}\n\n"
+                f"URL: {job.get('url') or 'N/A'}\n\n"
                 f"{job.get('full_description', '')}"
             )
             job_path.write_text(job_desc, encoding="utf-8")

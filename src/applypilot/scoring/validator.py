@@ -73,6 +73,17 @@ REQUIRED_SECTIONS: set[str] = {"SUMMARY", "TECHNICAL SKILLS", "EXPERIENCE", "PRO
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 
+def safe_job_prefix(job: dict) -> str:
+    """Build a safe filesystem prefix from a job dict's title and site.
+
+    Used for naming tailored resume and cover letter files.
+    Strips special chars, truncates, and replaces spaces with underscores.
+    """
+    safe_title = re.sub(r"[^\w\s-]", "", job.get("title") or "")[:50].strip().replace(" ", "_")
+    safe_site = re.sub(r"[^\w\s-]", "", job.get("site") or "")[:20].strip().replace(" ", "_")
+    return f"{safe_site}_{safe_title}"
+
+
 def _build_skills_set(profile: dict) -> set[str]:
     """Build the set of allowed skills from the profile's skills_boundary."""
     boundary = profile.get("skills_boundary", {})
