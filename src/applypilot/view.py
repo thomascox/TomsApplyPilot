@@ -510,7 +510,7 @@ function makeCard(j) {
   if (j.stage === 'applied' || j.interview_stage) {
     var pills = INTERVIEW_STAGES.map(function(s) {
       var active = j.interview_stage === s.key ? ' active' + (s.cls ? ' ' + s.cls : '') : '';
-      return '<button class="stage-pill' + active + '" onclick="setInterviewStage(' + JSON.stringify(j.url) + ',' + JSON.stringify(s.key) + ')">' + s.label + '</button>';
+      return '<button class="stage-pill' + active + '" data-stage="' + s.key + '" onclick="setInterviewStage(this)">' + s.label + '</button>';
     }).join('');
     interviewHtml = '<div class="interview-row"><span class="interview-label">Interview:</span>' + pills + '</div>';
   }
@@ -526,17 +526,17 @@ function makeCard(j) {
     fuTag = '<span class="followup-tag ' + fuCls + '">' + fuLabel + '</span>';
   }
   var followupHtml = '<div class="followup-row"><span class="followup-label">Follow-up:</span>'
-    + '<input class="followup-input" type="date" value="' + esc(fuVal) + '" onchange="setFollowupDue(' + JSON.stringify(j.url) + ',this.value)">'
+    + '<input class="followup-input" type="date" value="' + esc(fuVal) + '" onchange="setFollowupDue(this)">'
     + fuTag + '</div>';
 
   // Notes + contact fields
   var crmHtml = '<div class="crm-fields">'
     + '<div class="crm-field-row"><span class="crm-field-label">Contact:</span>'
     + '<input class="crm-input" type="text" placeholder="Recruiter or hiring manager\u2026" value="' + esc(j.recruiter_contact) + '"'
-    + ' oninput="saveCrmField(' + JSON.stringify(j.url) + ',\'recruiter_contact\',this.value,this)"></div>'
+    + ' data-field="recruiter_contact" oninput="saveCrmField(this)"></div>'
     + '<div class="crm-field-row"><span class="crm-field-label">Notes:</span>'
     + '<textarea class="crm-input" rows="2" placeholder="Notes\u2026"'
-    + ' oninput="saveCrmField(' + JSON.stringify(j.url) + ',\'notes\',this.value,this)">' + esc(j.notes) + '</textarea></div>'
+    + ' data-field="notes" oninput="saveCrmField(this)">' + esc(j.notes) + '</textarea></div>'
     + '</div>';
 
   const starCls = j.favorite ? ' favorited' : '';
@@ -791,7 +791,9 @@ const INTERVIEW_STAGES = [
   {key: 'closed',       label: 'Closed', cls: 'closed'},
 ];
 
-function setInterviewStage(url, stage) {
+function setInterviewStage(el) {
+  var url   = el.closest('.job-card').dataset.url;
+  var stage = el.dataset.stage;
   var newStage = '';
   for (var i = 0; i < JOBS.length; i++) {
     if (JOBS[i].url === url) {
@@ -809,7 +811,9 @@ function setInterviewStage(url, stage) {
 }
 
 // ── CRM: follow-up date ──
-function setFollowupDue(url, date) {
+function setFollowupDue(el) {
+  var url = el.closest('.job-card').dataset.url;
+  var date = el.value;
   for (var i = 0; i < JOBS.length; i++) {
     if (JOBS[i].url === url) { JOBS[i].follow_up_due = date; break; }
   }
@@ -822,11 +826,14 @@ function setFollowupDue(url, date) {
 
 // ── CRM: notes + contact (debounced auto-save) ──
 var _crmSaveTimers = {};
-function saveCrmField(url, field, value, inputEl) {
+function saveCrmField(el) {
+  var url   = el.closest('.job-card').dataset.url;
+  var field = el.dataset.field;
+  var value = el.value;
   var key = url + ':' + field;
   clearTimeout(_crmSaveTimers[key]);
-  inputEl.classList.remove('saved');
-  inputEl.classList.add('saving');
+  el.classList.remove('saved');
+  el.classList.add('saving');
   _crmSaveTimers[key] = setTimeout(function() {
     for (var i = 0; i < JOBS.length; i++) {
       if (JOBS[i].url === url) { JOBS[i][field] = value; break; }
@@ -838,12 +845,12 @@ function saveCrmField(url, field, value, inputEl) {
     })
     .then(function(r) { return r.json(); })
     .then(function(d) {
-      inputEl.classList.remove('saving');
-      if (d.ok) { inputEl.classList.add('saved'); setTimeout(function(){ inputEl.classList.remove('saved'); }, 1200); }
+      el.classList.remove('saving');
+      if (d.ok) { el.classList.add('saved'); setTimeout(function(){ el.classList.remove('saved'); }, 1200); }
       else showToast('Save error: ' + (d.error || 'unknown'));
     })
     .catch(function() {
-      inputEl.classList.remove('saving');
+      el.classList.remove('saving');
       showToast('Server not available \u2014 re-run: applypilot dashboard');
     });
   }, 800);
