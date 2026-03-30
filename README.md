@@ -267,6 +267,11 @@ Opens an interactive HTML dashboard in your browser showing all discovered jobs,
 - Filter by stage (scored, tailored, applied, etc.)
 - **Favorites** — click the star on any job card to mark it as a favorite. Favorites sort to the top in all views and are processed first by the tailor, cover, and apply stages. Persists across restarts.
 - **Reject** — remove a job from your pipeline in one click (marks it permanently failed). No restart required.
+- **Mark as Applied** — green button to record a manual application. Job moves to the Applied stage and stays visible via the Applied filter.
+- **CRM fields** — per-card notes, recruiter/contact, interview stage (Phone Screen → Technical → Onsite → Offer → Closed), and follow-up date. All auto-save and persist to the database.
+- **Applied date** — shows "Applied Xd ago" on Applied-stage cards.
+- **In Interview** stat tile — count of applied jobs with an active interview stage.
+- **Follow-up Due** stat tile — count of jobs with a follow-up date of today or earlier. Turns amber when non-zero; click to filter.
 
 ---
 

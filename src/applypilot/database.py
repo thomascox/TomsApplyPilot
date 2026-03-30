@@ -188,6 +188,14 @@ _ALL_COLUMNS: dict[str, str] = {
     "posted_date": "TEXT",
     # User interaction — 1 if the user starred this job as a favorite, 0 otherwise
     "favorite": "INTEGER DEFAULT 0",
+    # CRM tracking — free-text notes the user adds from the dashboard
+    "notes": "TEXT",
+    # CRM tracking — interview stage (phone_screen | technical | onsite | offer | closed)
+    "interview_stage": "TEXT",
+    # CRM tracking — ISO date for the next follow-up action (YYYY-MM-DD)
+    "follow_up_due": "TEXT",
+    # CRM tracking — recruiter or hiring manager contact info
+    "recruiter_contact": "TEXT",
 }
 
 

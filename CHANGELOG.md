@@ -12,6 +12,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Changes made in this personal fork relative to upstream Pickle-Pixel/ApplyPilot.
 Upstream changes are pulled in periodically; only fork-specific additions are listed here.
 
+### 2026-03-30
+
+#### Dashboard — CRM tracking features
+
+The dashboard now doubles as a lightweight job search CRM, designed to be useful
+after you've applied — not just before.
+
+- **Mark as Applied** button (green ✔) — records a manual application (sets
+  `applied_at`, `apply_status='applied'`). Job moves to the Applied stage and
+  remains visible under the Applied filter
+- **Interview stage tracker** — Phone Screen → Technical → Onsite → Offer → Closed
+  pills on every Applied-stage card; click to set/toggle; persists to database
+- **Follow-up date** — date picker per card with a relative label (green = future,
+  amber = today, red = overdue)
+- **Notes** — free-text field per card, debounced auto-save (saves 800ms after
+  you stop typing)
+- **Recruiter/Contact** — single-line field for recruiter or hiring manager name
+- **Applied date tag** — shows "Applied Xd ago" on Applied-stage cards
+- **In Interview** stat tile — Applied jobs with an active (non-closed) stage
+- **Follow-up Due** stat tile — jobs with a follow-up date ≤ today; turns amber
+  when non-zero; clicking filters to those jobs
+- Search now includes notes and contact fields in the keyword haystack
+- Four new database columns added via forward migration (no manual action needed):
+  `notes`, `interview_stage`, `follow_up_due`, `recruiter_contact`
+
+#### Dashboard — NoneType crash fixes
+
+- Fixed `'NoneType' object is not subscriptable` crash when job title or site is
+  NULL in the database — affected scoring, tailoring, and cover letter generation
+- Fixed same crash pattern in LLM response parsing when Gemini or OpenAI-compatible
+  APIs return null content (e.g. safety filter responses)
+
 ### 2026-03-26
 
 #### Profile: switched from JSON to YAML with inline comments

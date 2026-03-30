@@ -75,6 +75,9 @@ h1 { font-size: 1.8rem; font-weight: 700; margin-bottom: 0.25rem; }
 .stat-tailored{ border-color: #8b5cf6; } .stat-tailored .stat-num{ color: #a78bfa; }
 .stat-applied { border-color: #10b981; } .stat-applied .stat-num { color: #34d399; }
 .stat-failed  { border-color: #ef4444; } .stat-failed  .stat-num { color: #f87171; }
+.stat-interview    { border-color: #06b6d4; } .stat-interview    .stat-num { color: #67e8f9; }
+.stat-followup     { border-color: #334155; } .stat-followup     .stat-num { color: #94a3b8; }
+.stat-followup-alert { border-color: #f59e0b; } .stat-followup-alert .stat-num { color: #fcd34d; }
 
 /* Issues panel */
 .issues-panel {
@@ -237,6 +240,7 @@ h1 { font-size: 1.8rem; font-weight: 700; margin-bottom: 0.25rem; }
 .meta-tag.location { background: #1e3a5f; color: #93c5fd; }
 .meta-tag.posted   { background: #1e293b; color: #64748b; border: 1px solid #334155; }
 .meta-tag.posted.fresh { color: #10b981; border-color: #064e3b; }
+.meta-tag.applied-tag  { background: #064e3b22; color: #34d399; border: 1px solid #10b98140; }
 
 .keywords-row { font-size: 0.7rem; color: #10b981; margin-bottom: 0.22rem; line-height: 1.45; }
 .reasoning-row { font-size: 0.7rem; color: #64748b; margin-bottom: 0.38rem;
@@ -281,6 +285,54 @@ h1 { font-size: 1.8rem; font-weight: 700; margin-bottom: 0.25rem; }
 .reject-btn:hover { background: #ef444415; border-color: #f87171; color: #f87171; }
 .reject-btn:disabled { opacity: 0.4; cursor: default; }
 
+/* Mark-applied button — green counterpart to reject; calls /api/mark_applied */
+.mark-applied-btn {
+  background: transparent; border: 1px solid #10b98130; color: #64748b;
+  padding: 0.2rem 0.5rem; border-radius: 5px; cursor: pointer;
+  font-size: 0.7rem; transition: all 0.14s; flex-shrink: 0;
+}
+.mark-applied-btn:hover { background: #10b98115; border-color: #34d399; color: #34d399; }
+.mark-applied-btn:disabled { opacity: 0.4; cursor: default; }
+
+/* CRM: interview stage pills */
+.interview-row { display: flex; gap: 0.3rem; flex-wrap: wrap; margin: 0.4rem 0 0.2rem; align-items: center; }
+.interview-label { font-size: 0.68rem; color: #475569; flex-shrink: 0; }
+.stage-pill {
+  font-size: 0.65rem; padding: 0.15rem 0.45rem; border-radius: 20px; cursor: pointer;
+  border: 1px solid #334155; color: #64748b; background: transparent;
+  transition: all 0.12s; white-space: nowrap;
+}
+.stage-pill:hover { border-color: #60a5fa; color: #93c5fd; }
+.stage-pill.active { background: #1e40af; border-color: #3b82f6; color: #bfdbfe; }
+.stage-pill.active.offer  { background: #065f46; border-color: #10b981; color: #6ee7b7; }
+.stage-pill.active.closed { background: #1e1b4b; border-color: #818cf8; color: #c7d2fe; }
+
+/* CRM: follow-up date */
+.followup-row { display: flex; align-items: center; gap: 0.4rem; margin: 0.3rem 0 0.1rem; }
+.followup-label { font-size: 0.68rem; color: #475569; flex-shrink: 0; }
+.followup-input {
+  font-size: 0.68rem; background: #0f172a; border: 1px solid #334155; color: #94a3b8;
+  border-radius: 4px; padding: 0.15rem 0.35rem; cursor: pointer;
+}
+.followup-input:focus { outline: none; border-color: #60a5fa; }
+.followup-tag { font-size: 0.68rem; padding: 0.1rem 0.4rem; border-radius: 4px; }
+.followup-tag.due-future { background: #064e3b22; color: #6ee7b7; border: 1px solid #10b98140; }
+.followup-tag.due-today  { background: #78350f22; color: #fcd34d; border: 1px solid #f59e0b40; }
+.followup-tag.due-past   { background: #450a0a22; color: #fca5a5; border: 1px solid #ef444440; }
+
+/* CRM: notes + contact fields */
+.crm-fields { display: flex; flex-direction: column; gap: 0.3rem; margin: 0.3rem 0 0; }
+.crm-field-row { display: flex; align-items: flex-start; gap: 0.4rem; }
+.crm-field-label { font-size: 0.68rem; color: #475569; flex-shrink: 0; padding-top: 0.2rem; min-width: 4rem; }
+.crm-input {
+  font-size: 0.72rem; background: #0f172a; border: 1px solid #1e293b; color: #94a3b8;
+  border-radius: 4px; padding: 0.2rem 0.4rem; width: 100%; resize: none;
+  font-family: inherit; transition: border-color 0.12s;
+}
+.crm-input:focus { outline: none; border-color: #334155; }
+.crm-input.saving { border-color: #1d4ed8; }
+.crm-input.saved  { border-color: #065f46; }
+
 /* Toast notification — fades in/out after a reject action */
 .toast {
   position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999;
@@ -318,6 +370,7 @@ const state = {
   eligible:      '',
   sort:          'score',
   favoritesOnly: false,
+  followupDueOnly: false,
 };
 
 // ── Helpers ──
@@ -381,6 +434,7 @@ const ERROR_LABELS = {
   invalid_url:           'bad url',
   manual_ats:            'manual ATS',
   manually_rejected:     'rejected',
+  manually_applied:      'manual',
 };
 
 function stageBadge(stage, error) {
@@ -420,6 +474,8 @@ function makeCard(j) {
     ? '<span class="meta-tag location">' + esc(j.location.slice(0,50)) + '</span>' : '';
   const postedTag = postedStr
     ? '<span class="meta-tag posted' + (fresh ? ' fresh' : '') + '">' + postedStr + '</span>' : '';
+  const appliedTag = (j.stage === 'applied' && j.applied_at)
+    ? '<span class="meta-tag applied-tag">Applied ' + daysAgo(j.applied_at.slice(0,10)) + '</span>' : '';
 
   const kwRow = j.keywords
     ? '<div class="keywords-row">' + esc(j.keywords) + '</div>' : '';
@@ -437,11 +493,51 @@ function makeCard(j) {
     ? '<a href="' + esc(j.apply_url) + '" class="apply-link" target="_blank">Apply &rarr;</a>' : '';
   const errNote = (j.stage === 'failed' && j.apply_error)
     ? '<span class="error-note">' + esc((ERROR_LABELS[j.apply_error]||j.apply_error).replace(/_/g,' ')) + '</span>' : '';
-  // Reject button: shown for all non-applied jobs. Calls /api/reject on the local
-  // dashboard server to permanently fail the job and remove it from this session.
+  // Reject button: shown for all non-applied jobs.
   const rejectBtn = (j.stage !== 'applied')
     ? '<button class="reject-btn" onclick="rejectJob(this)" title="Remove from pipeline (permanently fail)">&#x2715; Reject</button>'
     : '';
+  // Mark-applied button: shown for all non-applied jobs so manual applications can be recorded.
+  const markAppliedBtn = (j.stage !== 'applied')
+    ? '<button class="mark-applied-btn" onclick="markApplied(this)" title="Mark as manually applied">&#x2714; Applied</button>'
+    : '';
+
+  // ── CRM rows (shown for applied + interview-stage jobs, or always visible when populated) ──
+  const urlE = esc(j.url);
+
+  // Interview stage pills (show for all applied jobs)
+  var interviewHtml = '';
+  if (j.stage === 'applied' || j.interview_stage) {
+    var pills = INTERVIEW_STAGES.map(function(s) {
+      var active = j.interview_stage === s.key ? ' active' + (s.cls ? ' ' + s.cls : '') : '';
+      return '<button class="stage-pill' + active + '" onclick="setInterviewStage(' + JSON.stringify(j.url) + ',' + JSON.stringify(s.key) + ')">' + s.label + '</button>';
+    }).join('');
+    interviewHtml = '<div class="interview-row"><span class="interview-label">Interview:</span>' + pills + '</div>';
+  }
+
+  // Follow-up date
+  var today = new Date().toISOString().slice(0,10);
+  var fuVal = j.follow_up_due || '';
+  var fuTag = '';
+  if (fuVal) {
+    var fuCls = fuVal < today ? 'due-past' : (fuVal === today ? 'due-today' : 'due-future');
+    var fuDiff = Math.round((new Date(fuVal) - new Date(today)) / 86400000);
+    var fuLabel = fuVal === today ? 'Today' : (fuDiff < 0 ? Math.abs(fuDiff) + 'd overdue' : 'in ' + fuDiff + 'd');
+    fuTag = '<span class="followup-tag ' + fuCls + '">' + fuLabel + '</span>';
+  }
+  var followupHtml = '<div class="followup-row"><span class="followup-label">Follow-up:</span>'
+    + '<input class="followup-input" type="date" value="' + esc(fuVal) + '" onchange="setFollowupDue(' + JSON.stringify(j.url) + ',this.value)">'
+    + fuTag + '</div>';
+
+  // Notes + contact fields
+  var crmHtml = '<div class="crm-fields">'
+    + '<div class="crm-field-row"><span class="crm-field-label">Contact:</span>'
+    + '<input class="crm-input" type="text" placeholder="Recruiter or hiring manager\u2026" value="' + esc(j.recruiter_contact) + '"'
+    + ' oninput="saveCrmField(' + JSON.stringify(j.url) + ',\'recruiter_contact\',this.value,this)"></div>'
+    + '<div class="crm-field-row"><span class="crm-field-label">Notes:</span>'
+    + '<textarea class="crm-input" rows="2" placeholder="Notes\u2026"'
+    + ' oninput="saveCrmField(' + JSON.stringify(j.url) + ',\'notes\',this.value,this)">' + esc(j.notes) + '</textarea></div>'
+    + '</div>';
 
   const starCls = j.favorite ? ' favorited' : '';
   const starIcon = j.favorite ? '\u2605' : '\u2606';
@@ -457,10 +553,11 @@ function makeCard(j) {
     + '</div>'
     + '<div class="meta-row">'
     +   '<span class="meta-tag site-tag" style="background:' + sColor + '22;color:' + sColor + ';border:1px solid ' + sColor + '44">' + esc(j.site) + '</span>'
-    +   salaryTag + locTag + postedTag
+    +   salaryTag + locTag + postedTag + appliedTag
     + '</div>'
     + kwRow + reaRow + descRow + fullDescRow
-    + '<div class="card-footer">' + applyBtn + errNote + rejectBtn + '</div>'
+    + interviewHtml + followupHtml + crmHtml
+    + '<div class="card-footer">' + applyBtn + errNote + markAppliedBtn + rejectBtn + '</div>'
     + '</div>';
 }
 
@@ -517,16 +614,18 @@ function updateBanner() {
 // ── Main render ──
 function render() {
   // 1. Filter
+  var today = new Date().toISOString().slice(0,10);
   var jobs = JOBS.filter(function(j) {
     var sc = j.score !== null ? j.score : 0;
     if (state.favoritesOnly && !j.favorite) return false;
+    if (state.followupDueOnly && !(j.follow_up_due && j.follow_up_due <= today)) return false;
     if (state.minScore > 0 && sc < state.minScore) return false;
     if (state.site && j.site !== state.site) return false;
     if (state.stage && j.stage !== state.stage) return false;
     if (state.eligible === 'yes' && j.eligible === false) return false;
     if (state.eligible === 'no'  && j.eligible !== false) return false;
     if (state.search) {
-      var hay = (j.title + ' ' + j.site + ' ' + j.location + ' ' + j.keywords + ' ' + j.reasoning).toLowerCase();
+      var hay = (j.title + ' ' + j.site + ' ' + j.location + ' ' + j.keywords + ' ' + j.reasoning + ' ' + j.recruiter_contact + ' ' + j.notes).toLowerCase();
       if (hay.indexOf(state.search) === -1) return false;
     }
     return true;
@@ -628,7 +727,7 @@ function setSearch(val) {
 function clearAll() {
   state.minScore = 0; state.search = ''; state.site = '';
   state.stage = ''; state.eligible = ''; state.sort = 'score';
-  state.favoritesOnly = false;
+  state.favoritesOnly = false; state.followupDueOnly = false;
   document.querySelectorAll('.score-filter-btn').forEach(function(b) { b.classList.remove('active'); });
   document.querySelectorAll('.stage-filter-btn').forEach(function(b) { b.classList.remove('active'); });
   document.querySelectorAll('.elig-filter-btn').forEach(function(b)  { b.classList.remove('active'); });
@@ -678,6 +777,78 @@ function toggleFavoritesOnly(btn) {
   render();
 }
 
+function filterFollowupDue() {
+  state.followupDueOnly = !state.followupDueOnly;
+  render();
+}
+
+// ── CRM: interview stage ──
+const INTERVIEW_STAGES = [
+  {key: 'phone_screen', label: 'Phone Screen'},
+  {key: 'technical',    label: 'Technical'},
+  {key: 'onsite',       label: 'Onsite'},
+  {key: 'offer',        label: 'Offer', cls: 'offer'},
+  {key: 'closed',       label: 'Closed', cls: 'closed'},
+];
+
+function setInterviewStage(url, stage) {
+  var newStage = '';
+  for (var i = 0; i < JOBS.length; i++) {
+    if (JOBS[i].url === url) {
+      newStage = JOBS[i].interview_stage === stage ? '' : stage;
+      JOBS[i].interview_stage = newStage;
+      break;
+    }
+  }
+  fetch('/api/update_crm', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({url: url, field: 'interview_stage', value: newStage})
+  }).catch(function() { showToast('Server not available \u2014 re-run: applypilot dashboard'); });
+  render();
+}
+
+// ── CRM: follow-up date ──
+function setFollowupDue(url, date) {
+  for (var i = 0; i < JOBS.length; i++) {
+    if (JOBS[i].url === url) { JOBS[i].follow_up_due = date; break; }
+  }
+  fetch('/api/update_crm', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({url: url, field: 'follow_up_due', value: date})
+  }).catch(function() { showToast('Server not available \u2014 re-run: applypilot dashboard'); });
+}
+
+// ── CRM: notes + contact (debounced auto-save) ──
+var _crmSaveTimers = {};
+function saveCrmField(url, field, value, inputEl) {
+  var key = url + ':' + field;
+  clearTimeout(_crmSaveTimers[key]);
+  inputEl.classList.remove('saved');
+  inputEl.classList.add('saving');
+  _crmSaveTimers[key] = setTimeout(function() {
+    for (var i = 0; i < JOBS.length; i++) {
+      if (JOBS[i].url === url) { JOBS[i][field] = value; break; }
+    }
+    fetch('/api/update_crm', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({url: url, field: field, value: value})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      inputEl.classList.remove('saving');
+      if (d.ok) { inputEl.classList.add('saved'); setTimeout(function(){ inputEl.classList.remove('saved'); }, 1200); }
+      else showToast('Save error: ' + (d.error || 'unknown'));
+    })
+    .catch(function() {
+      inputEl.classList.remove('saving');
+      showToast('Server not available \u2014 re-run: applypilot dashboard');
+    });
+  }, 800);
+}
+
 // ── Reject job ──
 // Calls the local dashboard server's /api/reject endpoint to permanently
 // fail a job (apply_attempts=99, apply_error='manually_rejected').
@@ -711,6 +882,41 @@ function rejectJob(btn) {
   .catch(function() {
     btn.disabled    = false;
     btn.textContent = '\u2715 Reject';
+    showToast('Server not available \u2014 re-run: applypilot dashboard');
+  });
+}
+
+// ── Mark as manually applied ──
+// Calls /api/mark_applied to record a manual application (applied_at + apply_error='manually_applied').
+// On success, updates the job's stage in memory and re-renders so it moves to the Applied filter.
+function markApplied(btn) {
+  var card = btn.closest('.job-card');
+  var url  = card.dataset.url;
+  if (!confirm('Mark this job as applied? It will be moved to the Applied stage.')) return;
+  btn.disabled    = true;
+  btn.textContent = 'Saving\u2026';
+  fetch('/api/mark_applied', {
+    method:  'POST',
+    headers: {'Content-Type': 'application/json'},
+    body:    JSON.stringify({url: url})
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (d.ok) {
+      for (var i = 0; i < JOBS.length; i++) {
+        if (JOBS[i].url === url) { JOBS[i].stage = 'applied'; JOBS[i].apply_error = 'manually_applied'; break; }
+      }
+      render();
+      showToast('\u2714 Marked as applied');
+    } else {
+      btn.disabled    = false;
+      btn.textContent = '\u2714 Applied';
+      showToast('Error: ' + (d.error || 'unknown'));
+    }
+  })
+  .catch(function() {
+    btn.disabled    = false;
+    btn.textContent = '\u2714 Applied';
     showToast('Server not available \u2014 re-run: applypilot dashboard');
   });
 }
@@ -779,9 +985,14 @@ def _job_to_dict(j: dict) -> dict:
         "reasoning":    reasoning,
         "desc_preview": full_desc[:400],
         "full_desc":    full_desc[:3000],
-        "apply_url":    j.get("application_url") or "",
-        "apply_error":  j.get("apply_error") or "",
-        "favorite":     bool(j.get("favorite")),
+        "apply_url":         j.get("application_url") or "",
+        "apply_error":       j.get("apply_error") or "",
+        "applied_at":        j.get("applied_at") or "",
+        "favorite":          bool(j.get("favorite")),
+        "notes":             j.get("notes") or "",
+        "interview_stage":   j.get("interview_stage") or "",
+        "follow_up_due":     j.get("follow_up_due") or "",
+        "recruiter_contact": j.get("recruiter_contact") or "",
     }
 
 
@@ -867,6 +1078,17 @@ def generate_dashboard(output_path: str | None = None) -> str:
     # already counted in the "Perm. Failed" stat tile and need no further action.
     # Showing them in the card list just adds noise and causes confusion after
     # manual rejection or expired-posting cleanup.
+    in_interview = conn.execute(
+        "SELECT COUNT(*) FROM jobs WHERE interview_stage IS NOT NULL AND interview_stage != '' "
+        "AND interview_stage NOT IN ('closed') AND applied_at IS NOT NULL"
+    ).fetchone()[0]
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    followup_due = conn.execute(
+        "SELECT COUNT(*) FROM jobs WHERE follow_up_due IS NOT NULL AND follow_up_due != '' "
+        "AND follow_up_due <= ? AND COALESCE(apply_attempts, 0) < 99",
+        (today_str,),
+    ).fetchone()[0]
+
     rows = conn.execute("""
         SELECT url, title, salary, location, site,
                full_description, application_url,
@@ -874,7 +1096,8 @@ def generate_dashboard(output_path: str | None = None) -> str:
                tailored_resume_path, cover_letter_path,
                applied_at, apply_status, apply_error, apply_attempts,
                location_eligible, posted_date, discovered_at,
-               COALESCE(favorite, 0) AS favorite
+               COALESCE(favorite, 0) AS favorite,
+               notes, interview_stage, follow_up_due, recruiter_contact
         FROM jobs
         WHERE COALESCE(apply_attempts, 0) < 99
         ORDER BY COALESCE(favorite, 0) DESC, COALESCE(fit_score, -1) DESC, title
@@ -959,6 +1182,12 @@ def generate_dashboard(output_path: str | None = None) -> str:
   </div>
   <div class="stat-card stat-failed">
     <div class="stat-num">{failed}</div><div class="stat-label">Perm. Failed</div>
+  </div>
+  <div class="stat-card stat-interview" onclick="setStage('applied',document.querySelector('.st-applied'))" style="cursor:pointer" title="Filter to Applied jobs">
+    <div class="stat-num">{in_interview}</div><div class="stat-label">In Interview</div>
+  </div>
+  <div class="stat-card stat-followup{' stat-followup-alert' if followup_due > 0 else ''}" onclick="filterFollowupDue()" style="cursor:pointer" title="Filter to jobs with follow-up due">
+    <div class="stat-num">{followup_due}</div><div class="stat-label">Follow-up Due</div>
   </div>
 </div>
 
@@ -1110,6 +1339,63 @@ def _make_handler(output_path: str):
                 self.send_header("Content-Length", str(len(resp)))
                 self.end_headers()
                 self.wfile.write(resp)
+
+            elif self.path == "/api/mark_applied":
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                try:
+                    data = json.loads(body)
+                    url = str(data.get("url", "")).strip()
+                    if not url:
+                        raise ValueError("missing url")
+
+                    now = datetime.now(timezone.utc).isoformat()
+                    conn = get_connection()
+                    conn.execute(
+                        "UPDATE jobs SET applied_at=?, apply_status='applied', "
+                        "apply_error='manually_applied' WHERE url=?",
+                        (now, url),
+                    )
+                    conn.commit()
+
+                    resp = json.dumps({"ok": True}).encode()
+                except Exception as exc:
+                    resp = json.dumps({"ok": False, "error": str(exc)}).encode()
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(resp)))
+                self.end_headers()
+                self.wfile.write(resp)
+
+            elif self.path == "/api/update_crm":
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                try:
+                    data = json.loads(body)
+                    url   = str(data.get("url", "")).strip()
+                    field = str(data.get("field", "")).strip()
+                    value = data.get("value", "")
+                    _ALLOWED_CRM_FIELDS = {"notes", "interview_stage", "follow_up_due", "recruiter_contact"}
+                    if not url:
+                        raise ValueError("missing url")
+                    if field not in _ALLOWED_CRM_FIELDS:
+                        raise ValueError(f"invalid field: {field!r}")
+
+                    conn = get_connection()
+                    conn.execute(f"UPDATE jobs SET {field}=? WHERE url=?", (value or None, url))
+                    conn.commit()
+
+                    resp = json.dumps({"ok": True}).encode()
+                except Exception as exc:
+                    resp = json.dumps({"ok": False, "error": str(exc)}).encode()
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(resp)))
+                self.end_headers()
+                self.wfile.write(resp)
+
             else:
                 self.send_response(404)
                 self.end_headers()
