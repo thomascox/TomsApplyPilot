@@ -12,6 +12,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Changes made in this personal fork relative to upstream Pickle-Pixel/ApplyPilot.
 Upstream changes are pulled in periodically; only fork-specific additions are listed here.
 
+### 2026-03-31 (2)
+
+#### Scoring — anti-hallucination rule + feedback loop
+
+**Anti-hallucination prompt instruction:**
+- The scoring prompt now explicitly instructs the LLM to only assess skills
+  that are present in the resume — never infer or extrapolate
+- If a JD's core duties require specific technical skills, certifications, or
+  domain expertise not found anywhere in the resume, a 2–3 point penalty is
+  applied regardless of title or seniority match
+- Prevents the class of error where a model assumes a senior technical manager
+  has cloud/DevOps/platform skills just because the role is technical
+
+**`scoring_feedback.yaml` — prompt tuning file:**
+- New file at `~/.applypilot/scoring_feedback.yaml` with `avoid`, `prefer`,
+  and `calibration_note` sections
+- Read on every scoring run and injected into the LLM prompt as directional
+  guidance (not hard rules — scores are still relative)
+- Edit manually at any time; run `applypilot feedback` to generate suggestions
+  from rejection history
+
+**Reject modal — reason capture:**
+- Reject button now opens an inline modal instead of a bare `confirm()` dialog
+- 9 generic, profile-agnostic reason options: wrong role type, seniority
+  mismatch, company type, salary below floor, location, industry, duplicate,
+  overqualified, other
+- Optional free-text note field for elaboration
+- Reason and note persisted to `reject_reason` / `reject_note` DB columns
+  (added via forward migration — no manual action needed)
+
+**`applypilot feedback` — new CLI command:**
+- Scans rejection history grouped by reason type
+- Suggests `avoid` entries for patterns with 3+ rejections
+- Shows a preview and asks for confirmation before writing to
+  `scoring_feedback.yaml`
+- Safe to run repeatedly — merges into existing file, does not overwrite
+
 ### 2026-03-31
 
 #### Dashboard — salary color coding, sort fixes, Apply link fix

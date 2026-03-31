@@ -279,7 +279,21 @@ AI scores every job 1–10 against your resume and profile.
 
 If your profile includes a `career_focus` block, the scorer applies a 2–3 point deduction for roles whose core duties centre on your historical secondary skills (see [Career Focus Scoring](#career-focus-scoring) above).
 
-To re-score jobs after changing your profile or switching models:
+**Anti-hallucination:** The scorer is explicitly instructed to only assess skills present in your resume — it will never infer or extrapolate skills you haven't listed. If a JD's core duties require specific technical skills, certifications, or domain expertise not mentioned anywhere in your resume, a 2–3 point penalty is applied regardless of title or seniority match.
+
+**Scoring feedback:** You can tune scoring further using `~/.applypilot/scoring_feedback.yaml`. This file is injected directly into the scoring prompt and is used as directional guidance on every future score. Run `applypilot feedback` to generate suggestions from your rejection history, or edit it manually:
+
+```yaml
+# ~/.applypilot/scoring_feedback.yaml
+avoid:
+  - "Roles where core duties are cloud infrastructure or platform engineering"
+prefer:
+  - "Roles with explicit product ownership, roadmap, and stakeholder accountability"
+calibration_note: >
+  Directional guidance based on rejection history. Not hard rules.
+```
+
+To re-score jobs after changing your profile, feedback file, or switching models:
 
 ```bash
 applypilot run score --rescore                       # re-score; protect jobs already >= 7
@@ -312,7 +326,7 @@ Opens an interactive HTML dashboard in your browser showing all discovered jobs,
 - Sort by score, date, or status
 - Filter by stage (scored, tailored, applied, etc.)
 - **Favorites** — click the star on any job card to mark it as a favorite. Favorites sort to the top in all views and are processed first by the tailor, cover, and apply stages. Persists across restarts.
-- **Reject** — remove a job from your pipeline in one click (marks it permanently failed). No restart required.
+- **Reject** — remove a job from your pipeline via a modal that captures a reason (wrong role type, seniority mismatch, company type, salary, location, industry, duplicate, overqualified, or other) plus an optional note. Reason and note are saved to the database and feed into `applypilot feedback`. No restart required.
 - **Mark as Applied** — green button to record a manual application. Job moves to the Applied stage and stays visible via the Applied filter.
 - **CRM fields** — per-card notes, recruiter/contact, interview stage (Phone Screen → Technical → Onsite → Offer → Closed), and follow-up date. All auto-save and persist to the database.
 - **Applied date** — shows "Applied Xd ago" on Applied-stage cards.
@@ -393,6 +407,18 @@ applypilot prune --nuke --yes                   # Delete EVERY job and start fre
 
 > **Stale vs delete:** `--stale` marks jobs as permanently failed (records are kept for history). `--no-description` actually deletes records. `--reset-failed` can recover stale jobs if needed.
 
+### `applypilot feedback`
+
+Analyzes your rejection history and helps you tune the scoring prompt.
+
+```bash
+applypilot feedback          # Show rejection patterns and suggest scoring_feedback.yaml updates
+```
+
+After you've rejected a number of jobs via the dashboard (with reasons), this command groups them by reason type, shows counts, and offers to write `~/.applypilot/scoring_feedback.yaml` with `avoid` entries for patterns that appear 3+ times. You review and confirm before anything is written.
+
+The feedback file is read on every scoring run and injected into the LLM prompt as directional guidance. Edit it freely at any time — it is not auto-overwritten.
+
 ### Other commands
 
 ```bash
@@ -400,6 +426,7 @@ applypilot init                                 # First-time setup wizard
 applypilot doctor                               # Verify setup, diagnose missing requirements
 applypilot status                               # Pipeline statistics
 applypilot dashboard                            # Open the interactive results dashboard
+applypilot feedback                             # Tune scoring from your rejection history
 ```
 
 ---
