@@ -228,13 +228,15 @@ def _parse_score_response(response: str) -> dict:
     }
 
 
-def score_job(resume_text: str, job: dict, profile: dict) -> dict:
+def score_job(resume_text: str, job: dict, profile: dict, feedback_block: str = "") -> dict:
     """Score a single job against the resume.
 
     Args:
-        resume_text: The candidate's full resume text.
-        job: Job dict with keys: title, site, location, full_description.
-        profile: User profile dict from load_profile().
+        resume_text:    The candidate's full resume text.
+        job:            Job dict with keys: title, site, location, full_description.
+        profile:        User profile dict from load_profile().
+        feedback_block: Pre-loaded scoring feedback block (from _load_scoring_feedback()).
+                        Pass once from run_scoring() to avoid re-reading the file per job.
 
     Returns:
         {"score": int, "keywords": str, "reasoning": str, "location_eligible": bool}
@@ -247,9 +249,6 @@ def score_job(resume_text: str, job: dict, profile: dict) -> dict:
 
     # career_focus is optional — if absent the scoring prompt omits the recency section
     career_focus: dict | None = profile.get("career_focus") or None
-
-    # scoring_feedback is optional — loaded from scoring_feedback.yaml if present
-    feedback_block = _load_scoring_feedback()
 
     job_text = (
         f"TITLE: {job['title']}\n"
@@ -382,6 +381,9 @@ def run_scoring(
     else:
         log.info("Scoring %d jobs sequentially...", len(jobs))
 
+    # Load scoring feedback once — injected into every prompt without re-reading the file.
+    feedback_block = _load_scoring_feedback()
+
     t0 = time.time()
     completed = 0
     errors = 0
@@ -389,7 +391,7 @@ def run_scoring(
 
     for job in jobs:
         old_score: int | None = job.get("fit_score")
-        result = score_job(resume_text, job, profile)
+        result = score_job(resume_text, job, profile, feedback_block)
         result["url"] = job["url"]
         result["old_score"] = old_score
         completed += 1

@@ -28,6 +28,19 @@ log = logging.getLogger(__name__)
 # Valid pipeline stages (in execution order)
 VALID_STAGES = ("discover", "enrich", "score", "tailor", "cover", "pdf")
 
+# Generic avoid-message text for each rejection reason (used by `feedback` command).
+# Keys match the reject_reason enum stored in the database.
+REASON_AVOID_MESSAGES: dict[str, str] = {
+    "wrong_role_type":    "Roles whose core duties do not match target role type",
+    "seniority_mismatch": "Roles with significant seniority mismatch (over or under-leveled)",
+    "company_type":       "Roles at agencies, staffing firms, or outsourcing companies",
+    "salary_below_floor": "Roles with stated salary below the candidate's minimum floor",
+    "location":           "Roles with unfavourable location or remote policy",
+    "industry":           "Roles in industries that are not a good fit",
+    "duplicate":          "Duplicate postings or roles already applied elsewhere",
+    "overqualified":      "Roles where the candidate is significantly overqualified",
+}
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1216,16 +1229,6 @@ def feedback() -> None:
 
     # ── Generate suggestions based on top-pattern heuristics ──
     THRESHOLD = 3
-    REASON_AVOID_MESSAGES = {
-        "wrong_role_type":    "Roles whose core duties do not match target role type",
-        "seniority_mismatch": "Roles with significant seniority mismatch (over or under-leveled)",
-        "company_type":       "Roles at agencies, staffing firms, or outsourcing companies",
-        "salary_below_floor": "Roles with stated salary below the candidate's minimum floor",
-        "location":           "Roles with unfavourable location or remote policy",
-        "industry":           "Roles in industries that are not a good fit",
-        "duplicate":          "Duplicate postings or roles already applied elsewhere",
-        "overqualified":      "Roles where the candidate is significantly overqualified",
-    }
 
     new_avoid: list[str] = []
     for reason, count in reason_counts.items():

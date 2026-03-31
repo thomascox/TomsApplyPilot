@@ -892,9 +892,6 @@ function saveCrmField(el) {
 }
 
 // ── Reject modal ──
-// Module-level variable holding the URL of the job being rejected.
-// Populated by rejectJob() and consumed by confirmReject().
-var _rejectUrl = '';
 
 const REJECT_REASONS = [
   {key: 'wrong_role_type',     label: 'Wrong role type'},
@@ -908,23 +905,20 @@ const REJECT_REASONS = [
   {key: 'other',               label: 'Other'},
 ];
 
-// Opens the reject modal; stores the card URL so confirmReject() can use it.
+// Opens the reject modal; stores the card URL on the modal element itself.
 function rejectJob(btn) {
   var card = btn.closest('.job-card');
-  _rejectUrl = card.dataset.url;
   var modal = document.getElementById('reject-modal');
+  if (modal) modal.dataset.rejectUrl = card.dataset.url;
   var list  = document.getElementById('reject-reason-list');
   var note  = document.getElementById('reject-note');
   if (!modal || !list || !note) return;
-  // Build radio buttons from REJECT_REASONS — all values are static constants.
-  var html = '';
-  for (var i = 0; i < REJECT_REASONS.length; i++) {
-    var r = REJECT_REASONS[i];
-    html += '<label class="reason-opt">'
+  var html = REJECT_REASONS.map(function(r) {
+    return '<label class="reason-opt">'
       + '<input type="radio" name="reject-reason" value="' + esc(r.key) + '">'
       + '<span class="reason-opt-lbl">' + esc(r.label) + '</span>'
       + '</label>';
-  }
+  }).join('');
   list.textContent = '';
   var tmp = document.createElement('div');
   tmp.innerHTML = html;
@@ -935,17 +929,20 @@ function rejectJob(btn) {
 
 function closeRejectModal() {
   var modal = document.getElementById('reject-modal');
-  if (modal) modal.classList.add('hidden');
-  _rejectUrl = '';
+  if (modal) {
+    modal.classList.add('hidden');
+    modal.dataset.rejectUrl = '';
+  }
 }
 
 function confirmReject() {
-  if (!_rejectUrl) return;
+  var modal = document.getElementById('reject-modal');
+  var url = modal ? modal.dataset.rejectUrl : '';
+  if (!url) return;
   var selected = document.querySelector('input[name="reject-reason"]:checked');
   var reason = selected ? selected.value : '';
   var noteEl = document.getElementById('reject-note');
   var note = noteEl ? noteEl.value.trim() : '';
-  var url = _rejectUrl;
   closeRejectModal();
   fetch('/api/reject', {
     method:  'POST',
@@ -1101,6 +1098,7 @@ def _job_to_dict(j: dict) -> dict:
     reasoning = (lines[1][:300] if len(lines) > 1 else "").strip()
 
     full_desc = j.get("full_description") or ""
+    sal_lo, sal_hi, _ = _parse_salary(j.get("salary") or "")
 
     return {
         "url":          j.get("url") or "",
@@ -1120,8 +1118,8 @@ def _job_to_dict(j: dict) -> dict:
         "apply_url":         j.get("application_url") or "",
         "apply_error":       j.get("apply_error") or "",
         "applied_at":        j.get("applied_at") or "",
-        "salary_annual_lo":  _parse_salary(j.get("salary") or "")[0],
-        "salary_annual_hi":  _parse_salary(j.get("salary") or "")[1],
+        "salary_annual_lo":  sal_lo,
+        "salary_annual_hi":  sal_hi,
         "favorite":          bool(j.get("favorite")),
         "notes":             j.get("notes") or "",
         "interview_stage":   j.get("interview_stage") or "",

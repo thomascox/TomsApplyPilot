@@ -12,6 +12,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Changes made in this personal fork relative to upstream Pickle-Pixel/ApplyPilot.
 Upstream changes are pulled in periodically; only fork-specific additions are listed here.
 
+### 2026-03-31 (3)
+
+#### Code cleanup — simplify pass
+
+- **Scoring batch efficiency**: `_load_scoring_feedback()` now called once per
+  `run_scoring()` batch and passed as a parameter to `score_job()` — previously
+  read and parsed `scoring_feedback.yaml` once per job (200 file reads per batch)
+- **`_parse_salary()` single call**: computed once per job in `_job_to_dict` and
+  unpacked (`sal_lo, sal_hi, _`) — previously called twice per job
+- **Reject modal URL storage**: removed `_rejectUrl` module-level JS variable;
+  URL is now stored as `modal.dataset.rejectUrl` and read back where needed
+- **`REASON_AVOID_MESSAGES`**: moved from inside `feedback()` function body to
+  module-level constant in cli.py
+- **Reject modal radio loop**: replaced `for` loop with `.map().join()` pattern
+
 ### 2026-03-31 (2)
 
 #### Scoring — anti-hallucination rule + feedback loop
