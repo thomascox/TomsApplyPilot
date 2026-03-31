@@ -1164,5 +1164,135 @@ def doctor() -> None:
     console.print()
 
 
+@app.command()
+def feedback() -> None:
+    """Analyze rejection history and update scoring_feedback.yaml.
+
+    Queries rejected jobs that have a reason set, groups and counts by reason,
+    and suggests updates to scoring_feedback.yaml. Asks for confirmation before
+    writing.
+    """
+    _bootstrap()
+
+    import yaml
+    from applypilot.config import SCORING_FEEDBACK_PATH
+    from applypilot.database import get_connection
+
+    conn = get_connection()
+
+    # ── Query rejection counts by reason ──
+    rows = conn.execute("""
+        SELECT reject_reason, COUNT(*) AS cnt
+        FROM jobs
+        WHERE reject_reason IS NOT NULL AND reject_reason != ''
+        GROUP BY reject_reason
+        ORDER BY cnt DESC
+    """).fetchall()
+
+    if not rows:
+        console.print("[dim]No rejections with a reason found. Reject jobs from the dashboard first.[/dim]")
+        return
+
+    reason_counts: dict[str, int] = {r[0]: r[1] for r in rows}
+    total_rejections = sum(reason_counts.values())
+
+    console.print(f"\n[bold]Rejection history[/bold] ({total_rejections} total with reason)\n")
+    for reason, count in sorted(reason_counts.items(), key=lambda x: -x[1]):
+        bar = "=" * count
+        console.print(f"  {reason:<25} {count:>3}  {bar}")
+    console.print()
+
+    # ── Load existing feedback file ──
+    existing: dict = {}
+    if SCORING_FEEDBACK_PATH.exists():
+        try:
+            existing = yaml.safe_load(SCORING_FEEDBACK_PATH.read_text(encoding="utf-8")) or {}
+        except Exception:
+            existing = {}
+
+    existing_avoid  = list(existing.get("avoid") or [])
+    existing_prefer = list(existing.get("prefer") or [])
+    existing_note   = str(existing.get("calibration_note") or "").strip()
+
+    # ── Generate suggestions based on top-pattern heuristics ──
+    THRESHOLD = 3
+    REASON_AVOID_MESSAGES = {
+        "wrong_role_type":    "Roles whose core duties do not match target role type",
+        "seniority_mismatch": "Roles with significant seniority mismatch (over or under-leveled)",
+        "company_type":       "Roles at agencies, staffing firms, or outsourcing companies",
+        "salary_below_floor": "Roles with stated salary below the candidate's minimum floor",
+        "location":           "Roles with unfavourable location or remote policy",
+        "industry":           "Roles in industries that are not a good fit",
+        "duplicate":          "Duplicate postings or roles already applied elsewhere",
+        "overqualified":      "Roles where the candidate is significantly overqualified",
+    }
+
+    new_avoid: list[str] = []
+    for reason, count in reason_counts.items():
+        if count >= THRESHOLD and reason in REASON_AVOID_MESSAGES:
+            msg = REASON_AVOID_MESSAGES[reason]
+            if msg not in existing_avoid:
+                new_avoid.append(msg)
+
+    if not new_avoid:
+        console.print("[dim]No new suggestions — no reason type has reached the threshold of "
+                      f"{THRESHOLD}+ rejections, or all suggestions are already present.[/dim]\n")
+
+        # Still show current file state
+        if SCORING_FEEDBACK_PATH.exists():
+            console.print(f"[dim]Current file: {SCORING_FEEDBACK_PATH}[/dim]")
+            console.print(f"[dim]  avoid:  {len(existing_avoid)} entr{'y' if len(existing_avoid)==1 else 'ies'}[/dim]")
+            console.print(f"[dim]  prefer: {len(existing_prefer)} entr{'y' if len(existing_prefer)==1 else 'ies'}[/dim]")
+        return
+
+    # ── Summarise what will be written ──
+    console.print(f"[bold yellow]Suggested additions[/bold yellow] (reasons with {THRESHOLD}+ rejections):\n")
+    for msg in new_avoid:
+        console.print(f"  [red]+[/red] avoid: {msg}")
+    console.print()
+
+    # ── Ask for confirmation ──
+    confirmed = typer.confirm("Write these suggestions to scoring_feedback.yaml?", default=True)
+    if not confirmed:
+        console.print("[dim]Aborted — no changes written.[/dim]")
+        return
+
+    # ── Merge and write ──
+    merged_avoid  = existing_avoid + new_avoid
+    merged_prefer = existing_prefer  # prefer untouched (no heuristics for it yet)
+
+    calibration_note = existing_note or (
+        "Based on rejection history. Use as directional guidance, not hard rules."
+    )
+
+    output = (
+        "# Scoring feedback — read by the scorer and injected into the LLM scoring prompt.\n"
+        "# Edit freely. Entries here are used as directional guidance, not hard rules.\n"
+        "# Run 'applypilot feedback' to update from your rejection history.\n\n"
+    )
+    output += yaml.dump(
+        {
+            "avoid":            merged_avoid,
+            "prefer":           merged_prefer,
+            "calibration_note": calibration_note,
+        },
+        default_flow_style=False,
+        allow_unicode=True,
+        sort_keys=False,
+    )
+
+    SCORING_FEEDBACK_PATH.write_text(output, encoding="utf-8")
+    console.print(f"[green]Written:[/green] {SCORING_FEEDBACK_PATH}")
+    console.print(
+        f"[dim]  avoid:  {len(merged_avoid)} entr{'y' if len(merged_avoid)==1 else 'ies'}[/dim]"
+    )
+    console.print(
+        f"[dim]  prefer: {len(merged_prefer)} entr{'y' if len(merged_prefer)==1 else 'ies'}[/dim]"
+    )
+    console.print(
+        "\n[dim]Run [bold]applypilot run score --rescore[/bold] to apply updated feedback to existing jobs.[/dim]\n"
+    )
+
+
 if __name__ == "__main__":
     app()
