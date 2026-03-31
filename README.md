@@ -226,13 +226,29 @@ queries:
 
 ### `.env`
 
-API keys and model configuration:
+API keys and model configuration. The repo ships an annotated example at [`.env.example`](.env.example) — copy it to get started:
 
+```bash
+cp .env.example ~/.applypilot/.env
 ```
-GEMINI_API_KEY=your-key-here
-LLM_MODEL=gemini-2.0-flash        # or gpt-4o-mini, or a local model name
-CAPSOLVER_API_KEY=optional
+
+Then fill in your values. A starter reference (see `.env.example` for full annotations):
+
+```bash
+# LLM Provider — pick one:
+GEMINI_API_KEY=your-key-here          # Gemini 2.0 Flash (recommended, free tier available)
+# OPENAI_API_KEY=your-key-here        # OpenAI (GPT-4o-mini or similar)
+# LLM_URL=http://127.0.0.1:8080/v1   # Local LLM (llama.cpp, Ollama, LM Studio, etc.)
+# LLM_MODEL=your-model-name           # Override the model name for any provider
+
+# Auto-apply (optional):
+CAPSOLVER_API_KEY=your-key-here       # CAPTCHA solving during auto-apply
+
+# Proxy (optional, helps with scraping rate limits):
+# PROXY=host:port:user:pass
 ```
+
+`LLM_URL` lets you point ApplyPilot at any OpenAI-compatible local server. Set `LLM_MODEL` to match whatever model you have loaded. No API key required for local models.
 
 ---
 
