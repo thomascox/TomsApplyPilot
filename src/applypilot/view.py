@@ -631,18 +631,26 @@ function render() {
     return true;
   });
 
-  // 2. Sort — favorites always float to the top within each sort mode
-  function favFirst(a, b) { return (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0); }
+  // 2. Sort — favorites float to top; applied jobs sink to bottom of every section,
+  //    then sub-sort applied by applied_at descending (most recent applied first).
+  function favFirst(a, b)     { return (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0); }
+  function appliedLast(a, b)  {
+    var aApp = a.stage === 'applied', bApp = b.stage === 'applied';
+    if (aApp !== bApp) return aApp ? 1 : -1;
+    // both applied: most recently applied first
+    if (aApp) return (b.applied_at||'').localeCompare(a.applied_at||'');
+    return 0;
+  }
   if (state.sort === 'score') {
     jobs.sort(function(a, b) {
-      return favFirst(a, b) || ((b.score||0) - (a.score||0)) || a.title.localeCompare(b.title);
+      return favFirst(a, b) || appliedLast(a, b) || ((b.score||0) - (a.score||0)) || (b.posted||'').localeCompare(a.posted||'') || a.title.localeCompare(b.title);
     });
   } else if (state.sort === 'date') {
     jobs.sort(function(a, b) {
-      return favFirst(a, b) || (b.posted||'').localeCompare(a.posted||'') || ((b.score||0) - (a.score||0));
+      return favFirst(a, b) || appliedLast(a, b) || (b.posted||'').localeCompare(a.posted||'') || ((b.score||0) - (a.score||0));
     });
   } else {
-    jobs.sort(function(a, b) { return favFirst(a, b) || a.title.localeCompare(b.title); });
+    jobs.sort(function(a, b) { return favFirst(a, b) || appliedLast(a, b) || a.title.localeCompare(b.title); });
   }
 
   // 3. Render cards
