@@ -21,7 +21,7 @@ import re
 import time
 from datetime import datetime, timezone
 
-from applypilot.config import RESUME_PATH, load_profile
+from applypilot.config import RESUME_PATH, SCORING_FEEDBACK_PATH, load_profile
 from applypilot.database import get_connection, get_jobs_by_stage
 from applypilot.llm import get_client
 
@@ -83,7 +83,56 @@ def _build_career_focus_block(career_focus: dict) -> str:
     )
 
 
-def _build_score_prompt(candidate_location: str, career_focus: dict | None = None) -> str:
+def _load_scoring_feedback() -> str:
+    """Load scoring feedback from scoring_feedback.yaml and format it as a prompt block.
+
+    Returns:
+        A formatted prompt section string with avoid/prefer/calibration_note sections,
+        or empty string if the file does not exist, is empty, or is malformed.
+    """
+    import yaml
+
+    if not SCORING_FEEDBACK_PATH.exists():
+        return ""
+
+    try:
+        data = yaml.safe_load(SCORING_FEEDBACK_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+
+    if not data:
+        return ""
+
+    avoid = data.get("avoid") or []
+    prefer = data.get("prefer") or []
+    note = (data.get("calibration_note") or "").strip()
+
+    # Nothing useful to inject if all sections are empty
+    if not avoid and not prefer and not note:
+        return ""
+
+    lines = [
+        "\nSCORING FEEDBACK (from your rejection history — treat as strong scoring guidance):",
+    ]
+    if avoid:
+        lines.append("Avoid scoring highly:")
+        for item in avoid:
+            lines.append(f"- {item}")
+    if prefer:
+        lines.append("Prefer scoring highly:")
+        for item in prefer:
+            lines.append(f"- {item}")
+    if note:
+        lines.append(f"Note: {note}")
+
+    return "\n".join(lines) + "\n"
+
+
+def _build_score_prompt(
+    candidate_location: str,
+    career_focus: dict | None = None,
+    feedback_block: str = "",
+) -> str:
     """Build the scoring prompt including location eligibility and optional career focus context.
 
     Args:
@@ -92,6 +141,8 @@ def _build_score_prompt(candidate_location: str, career_focus: dict | None = Non
                              a recency-aware penalty section is injected that instructs the
                              LLM to down-score roles whose primary duties are centred on
                              skills the candidate has marked as historical/background.
+        feedback_block:      Optional scoring feedback block from _load_scoring_feedback().
+                             Injected after career focus block and before scoring criteria.
     """
     career_block = _build_career_focus_block(career_focus) if career_focus else ""
 
@@ -110,7 +161,7 @@ A job is NOT ELIGIBLE if:
 - The posting is in a different country from the candidate with no primary remote option
 - "Work from anywhere X weeks/year" is the ONLY flexibility mentioned -- this means the job is still onsite/hybrid, NOT a remote role
 - The job is hybrid or onsite in an overseas city (Europe, Asia, etc.) even if there is some travel flexibility
-{career_block}
+{career_block}{feedback_block}
 SCORING CRITERIA (apply only after determining eligibility and career focus):
 - If NOT ELIGIBLE: score MUST be 1 or 2, regardless of skill match
 - If ELIGIBLE, score on skill/experience fit:
@@ -125,6 +176,12 @@ IMPORTANT FACTORS (for eligible roles):
 - Consider transferable experience (automation, scripting, API work)
 - Factor in the candidate's project experience
 - Be realistic about experience level vs. job requirements (years of experience, seniority)
+
+ANTI-HALLUCINATION RULE:
+- Only assess the candidate against skills and experience EXPLICITLY stated in their resume.
+- Do NOT infer, assume, or extrapolate skills that are not mentioned (e.g. do not assume a senior manager knows a specific cloud platform just because the role is technical).
+- If the JD's core duties require specific technical skills, certifications, platforms, or domain expertise that are NOT present anywhere in the resume, treat this as a meaningful gap and apply a 2-3 point penalty to the score.
+- A strong title match or seniority match does NOT compensate for absent core technical requirements.
 
 RESPOND IN EXACTLY THIS FORMAT (no other text):
 SCORE: [1-10]
@@ -191,6 +248,9 @@ def score_job(resume_text: str, job: dict, profile: dict) -> dict:
     # career_focus is optional — if absent the scoring prompt omits the recency section
     career_focus: dict | None = profile.get("career_focus") or None
 
+    # scoring_feedback is optional — loaded from scoring_feedback.yaml if present
+    feedback_block = _load_scoring_feedback()
+
     job_text = (
         f"TITLE: {job['title']}\n"
         f"COMPANY: {job['site']}\n"
@@ -199,7 +259,7 @@ def score_job(resume_text: str, job: dict, profile: dict) -> dict:
     )
 
     messages = [
-        {"role": "system", "content": _build_score_prompt(candidate_location, career_focus)},
+        {"role": "system", "content": _build_score_prompt(candidate_location, career_focus, feedback_block)},
         {"role": "user", "content": f"RESUME:\n{resume_text}\n\n---\n\nJOB POSTING:\n{job_text}"},
     ]
 
