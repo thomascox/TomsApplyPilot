@@ -16,6 +16,7 @@ RESUME_PATH = APP_DIR / "resume.txt"
 RESUME_PDF_PATH = APP_DIR / "resume.pdf"
 SEARCH_CONFIG_PATH = APP_DIR / "searches.yaml"
 ENV_PATH = APP_DIR / ".env"
+SCORING_FEEDBACK_PATH = APP_DIR / "scoring_feedback.yaml"
 
 # Generated output
 TAILORED_DIR = APP_DIR / "tailored_resumes"
