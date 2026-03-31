@@ -345,6 +345,23 @@ h1 { font-size: 1.8rem; font-weight: 700; margin-bottom: 0.25rem; }
 }
 .toast.show { opacity: 1; transform: translateY(0); }
 
+/* Reject modal */
+.modal-overlay { position:fixed; inset:0; background:#00000088; z-index:1000; display:flex; align-items:center; justify-content:center; }
+.modal-box { background:#1e293b; border:1px solid #334155; border-radius:10px; padding:1.4rem 1.6rem; width:360px; max-width:90vw; }
+.modal-title { font-size:0.95rem; font-weight:600; color:#e2e8f0; margin-bottom:0.2rem; }
+.modal-subtitle { font-size:0.78rem; color:#64748b; margin-bottom:0.8rem; }
+.reason-list { display:flex; flex-direction:column; gap:0.3rem; margin-bottom:0.8rem; }
+.reason-opt { display:flex; align-items:center; gap:0.5rem; cursor:pointer; padding:0.25rem 0.4rem; border-radius:5px; transition:background 0.1s; }
+.reason-opt:hover { background:#334155; }
+.reason-opt input { accent-color:#3b82f6; cursor:pointer; }
+.reason-opt label { font-size:0.78rem; color:#94a3b8; cursor:pointer; }
+.modal-actions { display:flex; justify-content:flex-end; gap:0.5rem; margin-top:0.9rem; }
+.modal-btn { font-size:0.78rem; padding:0.3rem 0.8rem; border-radius:5px; cursor:pointer; border:1px solid #334155; }
+.modal-cancel { background:transparent; color:#64748b; }
+.modal-cancel:hover { color:#94a3b8; }
+.modal-confirm { background:#7f1d1d; border-color:#ef4444; color:#fca5a5; }
+.modal-confirm:hover { background:#991b1b; }
+
 .empty-state { color: #475569; text-align: center; padding: 3rem; font-size: 0.9rem; }
 .hidden { display: none !important; }
 
@@ -874,21 +891,66 @@ function saveCrmField(el) {
   }, 800);
 }
 
-// ── Reject job ──
-// Calls the local dashboard server's /api/reject endpoint to permanently
-// fail a job (apply_attempts=99, apply_error='manually_rejected').
-// On success, removes the job from the in-memory JOBS array and re-renders
-// so it disappears immediately without a page reload.
+// ── Reject modal ──
+// Module-level variable holding the URL of the job being rejected.
+// Populated by rejectJob() and consumed by confirmReject().
+var _rejectUrl = '';
+
+const REJECT_REASONS = [
+  {key: 'wrong_role_type',     label: 'Wrong role type'},
+  {key: 'seniority_mismatch',  label: 'Seniority mismatch'},
+  {key: 'company_type',        label: 'Company type (agency, staffing, etc.)'},
+  {key: 'salary_below_floor',  label: 'Salary below my floor'},
+  {key: 'location',            label: 'Location / remote policy'},
+  {key: 'industry',            label: 'Industry not a fit'},
+  {key: 'duplicate',           label: 'Duplicate / already applied elsewhere'},
+  {key: 'overqualified',       label: 'Overqualified'},
+  {key: 'other',               label: 'Other'},
+];
+
+// Opens the reject modal; stores the card URL so confirmReject() can use it.
 function rejectJob(btn) {
   var card = btn.closest('.job-card');
-  var url  = card.dataset.url;
-  if (!confirm('Remove this job from your pipeline? It will be marked permanently failed and hidden.')) return;
-  btn.disabled    = true;
-  btn.textContent = 'Removing\u2026';
+  _rejectUrl = card.dataset.url;
+  var modal = document.getElementById('reject-modal');
+  var list  = document.getElementById('reject-reason-list');
+  var note  = document.getElementById('reject-note');
+  if (!modal || !list || !note) return;
+  // Build radio buttons from REJECT_REASONS — all values are static constants.
+  var html = '';
+  for (var i = 0; i < REJECT_REASONS.length; i++) {
+    var r = REJECT_REASONS[i];
+    html += '<label class="reason-opt">'
+      + '<input type="radio" name="reject-reason" value="' + esc(r.key) + '">'
+      + '<span class="reason-opt-lbl">' + esc(r.label) + '</span>'
+      + '</label>';
+  }
+  list.textContent = '';
+  var tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  while (tmp.firstChild) { list.appendChild(tmp.firstChild); }
+  note.value = '';
+  modal.classList.remove('hidden');
+}
+
+function closeRejectModal() {
+  var modal = document.getElementById('reject-modal');
+  if (modal) modal.classList.add('hidden');
+  _rejectUrl = '';
+}
+
+function confirmReject() {
+  if (!_rejectUrl) return;
+  var selected = document.querySelector('input[name="reject-reason"]:checked');
+  var reason = selected ? selected.value : '';
+  var noteEl = document.getElementById('reject-note');
+  var note = noteEl ? noteEl.value.trim() : '';
+  var url = _rejectUrl;
+  closeRejectModal();
   fetch('/api/reject', {
     method:  'POST',
     headers: {'Content-Type': 'application/json'},
-    body:    JSON.stringify({url: url})
+    body:    JSON.stringify({url: url, reason: reason, note: note})
   })
   .then(function(r) { return r.json(); })
   .then(function(d) {
@@ -899,14 +961,10 @@ function rejectJob(btn) {
       render();
       showToast('Job removed from pipeline');
     } else {
-      btn.disabled    = false;
-      btn.textContent = '\u2715 Reject';
       showToast('Error: ' + (d.error || 'unknown'));
     }
   })
   .catch(function() {
-    btn.disabled    = false;
-    btn.textContent = '\u2715 Reject';
     showToast('Server not available \u2014 re-run: applypilot dashboard');
   });
 }
@@ -1327,6 +1385,20 @@ def generate_dashboard(output_path: str | None = None) -> str:
 <div id="job-list"></div>
 
 <div id="toast" class="toast"></div>
+
+<div id="reject-modal" class="modal-overlay hidden">
+  <div class="modal-box">
+    <div class="modal-title">Remove from pipeline</div>
+    <div class="modal-subtitle">Why are you rejecting this job?</div>
+    <div id="reject-reason-list" class="reason-list"></div>
+    <textarea id="reject-note" class="crm-input" rows="2" placeholder="Optional note..."></textarea>
+    <div class="modal-actions">
+      <button class="modal-btn modal-cancel" onclick="closeRejectModal()">Cancel</button>
+      <button class="modal-btn modal-confirm" onclick="confirmReject()">Remove</button>
+    </div>
+  </div>
+</div>
+
 <script>{js}</script>
 </body>
 </html>"""
@@ -1405,13 +1477,15 @@ def _make_handler(output_path: str):
                     url = str(data.get("url", "")).strip()
                     if not url:
                         raise ValueError("missing url")
+                    reason = str(data.get("reason", "")).strip()
+                    note   = str(data.get("note", "")).strip()
 
                     # Permanently fail the job — same semantics as prune --location-ineligible
                     conn = get_connection()
                     conn.execute(
                         "UPDATE jobs SET apply_attempts=99, apply_status='failed', "
-                        "apply_error='manually_rejected' WHERE url=?",
-                        (url,),
+                        "apply_error='manually_rejected', reject_reason=?, reject_note=? WHERE url=?",
+                        (reason or None, note or None, url),
                     )
                     conn.commit()
 
