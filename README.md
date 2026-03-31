@@ -4,6 +4,8 @@
 
 > **🍴 This is Tom's personal fork** ([thomascox/TomsApplyPilot](https://github.com/thomascox/TomsApplyPilot)) of the upstream Pickle-Pixel/ApplyPilot project. It includes personal customizations and improvements. See [CHANGELOG.md](CHANGELOG.md) for what's different in this fork.
 
+> **Installing this fork:** This fork is not published to PyPI — `pip install applypilot` installs the upstream version. To use this fork, install from source (see [Installing This Fork](#installing-this-fork) below).
+
 # ApplyPilot
 
 **Applied to 1,000 jobs in 2 days. Fully autonomous. Open source.**
@@ -39,6 +41,34 @@ applypilot apply --dry-run  # fill forms without submitting
 ```
 
 > **Why two install commands?** `python-jobspy` pins an exact numpy version in its metadata that conflicts with pip's resolver, but works fine at runtime with any modern numpy. The `--no-deps` flag bypasses the resolver; the second command installs jobspy's actual runtime dependencies.
+
+---
+
+## Installing This Fork
+
+This fork is not on PyPI. Install directly from GitHub:
+
+```bash
+git clone https://github.com/thomascox/TomsApplyPilot.git
+cd TomsApplyPilot
+pip install -e .
+pip install --no-deps python-jobspy && pip install pydantic tls-client requests markdownify regex
+```
+
+The `-e` flag installs in editable mode so you can pull updates with `git pull` and they take effect immediately without reinstalling.
+
+**To update later:**
+```bash
+git pull
+```
+
+**First-time setup after install:**
+```bash
+applypilot init      # one-time setup: resume, profile, preferences, API keys
+applypilot doctor    # verify your setup
+```
+
+> If you want the upstream version instead (no fork customizations), use `pip install applypilot` as documented in the original project.
 
 ---
 
@@ -272,6 +302,9 @@ Opens an interactive HTML dashboard in your browser showing all discovered jobs,
 - **Applied date** — shows "Applied Xd ago" on Applied-stage cards.
 - **In Interview** stat tile — count of applied jobs with an active interview stage.
 - **Follow-up Due** stat tile — count of jobs with a follow-up date of today or earlier. Turns amber when non-zero; click to filter.
+- **Salary color coding** — salary tag is green when the posted max meets your floor (`salary_range_min` in profile), red when below. Gray when salary is present but not parseable.
+- **Apply →** — always shown; falls back to the job listing URL when a dedicated application URL isn't available.
+- **Sort behavior** — in score mode, applied jobs sink to the bottom of their score group (not the whole page). Within each score group, jobs are ordered newest posted first.
 
 ---
 
@@ -328,6 +361,7 @@ applypilot prune                                # Show all issue counts — no c
 applypilot prune --stale                        # Permanently fail jobs older than 30 days (pre-tailoring)
 applypilot prune --stale --max-days 14          # Use a tighter age cutoff
 applypilot prune --location-ineligible          # Permanently fail location-ineligible jobs
+applypilot prune --below-salary                 # Permanently fail jobs with posted salary below your floor
 applypilot prune --invalid-url                  # Permanently fail jobs with bad/missing URLs
 applypilot prune --no-description               # Delete jobs that were never enriched
 applypilot prune --all                          # Run all four cleanup operations above

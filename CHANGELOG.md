@@ -12,6 +12,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Changes made in this personal fork relative to upstream Pickle-Pixel/ApplyPilot.
 Upstream changes are pulled in periodically; only fork-specific additions are listed here.
 
+### 2026-03-31
+
+#### Dashboard — salary color coding, sort fixes, Apply link fix
+
+- **Salary color coding**: salary tag is green when posted max ≥ your salary
+  floor (`salary_range_min` in profile), red when below. Gray when present
+  but not parseable (e.g. "Depends on Experience"). Handles all observed
+  formats: `USD###-USD###/yearly`, `$## - $##` (hourly auto-detected by
+  magnitude), `USD##/hourly`, `USD ###,###.## per year`, etc.
+- **`prune --below-salary`**: new opt-in flag (not included in `--all`) that
+  permanently fails jobs with a posted salary max below your floor. Audit
+  mode reports the below-floor count as an additional note.
+- **Sort fix**: in score mode, applied jobs now sink to the bottom of their
+  score group rather than the whole page — a score-9 applied job stays in
+  the 9-section, just after all unapplied 9s. Date/alpha sorts unaffected.
+- **Apply → link**: now always shown on every card; falls back to the job
+  listing URL when a dedicated `application_url` isn't available (most cards
+  only get that after enrichment runs for certain sites).
+
 ### 2026-03-30
 
 #### Dashboard — CRM tracking features
