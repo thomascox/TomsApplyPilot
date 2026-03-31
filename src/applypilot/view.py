@@ -22,7 +22,7 @@ from pathlib import Path
 
 from rich.console import Console
 
-from applypilot.config import APP_DIR
+from applypilot.config import APP_DIR, load_profile
 from applypilot.database import get_connection
 
 console = Console()
@@ -236,7 +236,9 @@ h1 { font-size: 1.8rem; font-weight: 700; margin-bottom: 0.25rem; }
 .meta-row { display: flex; flex-wrap: wrap; gap: 0.28rem; margin-bottom: 0.32rem; }
 .meta-tag { font-size: 0.68rem; padding: 0.1rem 0.4rem; border-radius: 3px; }
 .meta-tag.site-tag { /* colored per site, set inline */ }
-.meta-tag.salary   { background: #064e3b33; color: #6ee7b7; border: 1px solid #064e3b55; }
+.meta-tag.salary     { background: #1e293b; color: #94a3b8; border: 1px solid #334155; }
+.meta-tag.salary-ok  { background: #064e3b33; color: #6ee7b7; border: 1px solid #064e3b55; }
+.meta-tag.salary-low { background: #450a0a33; color: #fca5a5; border: 1px solid #ef444455; }
 .meta-tag.location { background: #1e3a5f; color: #93c5fd; }
 .meta-tag.posted   { background: #1e293b; color: #64748b; border: 1px solid #334155; }
 .meta-tag.posted.fresh { color: #10b981; border-color: #064e3b; }
@@ -360,6 +362,8 @@ h1 { font-size: 1.8rem; font-weight: 700; margin-bottom: 0.25rem; }
 _JS_TEMPLATE = """
 const JOBS  = __JOBS__;
 const SITES = __SITES__;
+const ANNUAL_FLOOR = __ANNUAL_FLOOR__;
+const HOURLY_FLOOR = __HOURLY_FLOOR__;
 
 // ── State ──
 const state = {
@@ -468,8 +472,12 @@ function makeCard(j) {
   const postedStr = daysAgo(j.posted);
   const fresh     = isFresh(j.posted);
 
+  var salaryClass = 'salary';
+  if (j.salary_annual_lo !== null) {
+    salaryClass = j.salary_annual_lo >= ANNUAL_FLOOR ? 'salary salary-ok' : 'salary salary-low';
+  }
   const salaryTag = j.salary
-    ? '<span class="meta-tag salary">' + esc(j.salary) + '</span>' : '';
+    ? '<span class="meta-tag ' + salaryClass + '">' + esc(j.salary) + '</span>' : '';
   const locTag = j.location
     ? '<span class="meta-tag location">' + esc(j.location.slice(0,50)) + '</span>' : '';
   const postedTag = postedStr
@@ -952,6 +960,55 @@ render();
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+def _parse_salary(raw: str) -> tuple[float | None, float | None, str]:
+    """Parse a raw salary string into (annual_low, annual_high, period).
+
+    Returns (None, None, '') if not parseable.
+    period is 'yearly' or 'hourly'.
+    """
+    import re as _re
+    if not raw:
+        return None, None, ""
+    s = raw.lower().replace(",", "").replace("usd", "").replace("$", "").strip()
+
+    hourly = "hour" in s or "/hr" in s or "per hour" in s
+    yearly = "year" in s or "annual" in s or "yearly" in s or "/yr" in s
+
+    nums = [float(x) for x in _re.findall(r"\d+(?:\.\d+)?", s) if float(x) > 0]
+    if not nums:
+        return None, None, ""
+
+    # Infer period from magnitude if not explicit
+    if not hourly and not yearly:
+        hourly = nums[0] < 1000  # e.g. "$70 - $80" → hourly
+        yearly = not hourly
+
+    lo, hi = nums[0], nums[-1] if len(nums) > 1 else nums[0]
+    if lo > hi:
+        lo, hi = hi, lo
+
+    if hourly:
+        return lo * 2080, hi * 2080, "hourly"
+    return lo, hi, "yearly"
+
+
+def _salary_floor_from_profile() -> tuple[float, float]:
+    """Return (annual_floor, hourly_floor) from profile. Defaults: 155000, 82."""
+    try:
+        profile = load_profile()
+        comp = profile.get("compensation", {})
+        raw = str(comp.get("salary_range_min") or comp.get("salary_expectation") or "")
+        val = float("".join(c for c in raw if c.isdigit() or c == ".")) if raw else 0
+        # Detect hourly vs annual by magnitude
+        if 0 < val < 1000:
+            return val * 2080, val
+        if val >= 1000:
+            return val, round(val / 2080, 2)
+    except Exception:
+        pass
+    return 155000.0, 82.0
+
+
 def _compute_stage(j: dict) -> str:
     if j.get("applied_at"):
         return "applied"
@@ -1003,6 +1060,8 @@ def _job_to_dict(j: dict) -> dict:
         "apply_url":         j.get("application_url") or "",
         "apply_error":       j.get("apply_error") or "",
         "applied_at":        j.get("applied_at") or "",
+        "salary_annual_lo":  _parse_salary(j.get("salary") or "")[0],
+        "salary_annual_hi":  _parse_salary(j.get("salary") or "")[1],
         "favorite":          bool(j.get("favorite")),
         "notes":             j.get("notes") or "",
         "interview_stage":   j.get("interview_stage") or "",
@@ -1159,10 +1218,19 @@ def generate_dashboard(output_path: str | None = None) -> str:
             + "</div>"
         )
 
+    # ── Salary floor from profile ──
+    annual_floor, hourly_floor = _salary_floor_from_profile()
+
     # ── JSON blobs ──
     jobs_json  = json.dumps(jobs_data,  ensure_ascii=False)
     sites_json = json.dumps(site_stats, ensure_ascii=False)
-    js = _JS_TEMPLATE.replace("__JOBS__", jobs_json).replace("__SITES__", sites_json)
+    js = (
+        _JS_TEMPLATE
+        .replace("__JOBS__", jobs_json)
+        .replace("__SITES__", sites_json)
+        .replace("__ANNUAL_FLOOR__", str(annual_floor))
+        .replace("__HOURLY_FLOOR__", str(hourly_floor))
+    )
 
     ts = datetime.now().strftime("%Y-%m-%d %H:%M")
 

@@ -558,6 +558,13 @@ def prune(
         False, "--all",
         help="Run all cleanup operations: --stale, --location-ineligible, --invalid-url, --no-description.",
     ),
+    below_salary: bool = typer.Option(
+        False, "--below-salary",
+        help=(
+            "Permanently fail jobs whose posted salary maximum is below your salary floor "
+            "(salary_range_min from profile). Only acts on jobs with a parseable salary."
+        ),
+    ),
     reset_failed: bool = typer.Option(
         False, "--reset-failed",
         help=(
@@ -602,6 +609,7 @@ def prune(
       applypilot prune --stale                Permanently fail jobs older than 30 days (pre-tailoring)
       applypilot prune --stale --max-days 14  Use a tighter age threshold
       applypilot prune --location-ineligible  Permanently fail location-ineligible jobs
+      applypilot prune --below-salary         Permanently fail jobs with salary below your floor
       applypilot prune --invalid-url          Permanently fail jobs with bad URLs
       applypilot prune --no-description       Delete jobs that never got enriched
       applypilot prune --all                  Run all four cleanup operations above
@@ -623,7 +631,7 @@ def prune(
 
     conn = get_connection()
     any_flag = any([stale, location_ineligible, invalid_url, no_description,
-                    all_issues, reset_failed, reset_stuck, reset_scores, nuke])
+                    all_issues, below_salary, reset_failed, reset_stuck, reset_scores, nuke])
 
     # ------------------------------------------------------------------
     # AUDIT MODE — no flags: show a report of all issue categories
@@ -718,6 +726,29 @@ def prune(
                 any_issues = True
 
         console.print(issue_table)
+
+        # Below-salary count requires parsing salary strings — shown separately
+        try:
+            from applypilot.config import load_profile
+            from applypilot.view import _parse_salary, _salary_floor_from_profile
+            annual_floor, _ = _salary_floor_from_profile()
+            sal_rows = conn.execute(
+                "SELECT salary FROM jobs WHERE salary IS NOT NULL AND salary != '' "
+                "AND COALESCE(apply_attempts,0) < 99 AND applied_at IS NULL"
+            ).fetchall()
+            below = sum(
+                1 for (s,) in sal_rows
+                if _parse_salary(s)[1] is not None and _parse_salary(s)[1] < annual_floor
+            )
+            if below > 0:
+                console.print(
+                    f"\n[yellow]{below} job(s) have a posted salary below your floor "
+                    f"(${annual_floor:,.0f}/yr) — run [bold]applypilot prune --below-salary[/bold] to remove.[/yellow]"
+                )
+                any_issues = True
+        except Exception:
+            pass
+
         if not any_issues:
             console.print("\n[green]No issues found.[/green]")
         else:
@@ -824,6 +855,43 @@ def prune(
                 console.print("[yellow]Skipped --location-ineligible.[/yellow]")
         else:
             console.print("[green]--location-ineligible: none found.[/green]")
+
+    # ------------------------------------------------------------------
+    # --below-salary  (not included in --all — opt-in only)
+    # ------------------------------------------------------------------
+    if below_salary:
+        from applypilot.view import _parse_salary, _salary_floor_from_profile
+        annual_floor, _ = _salary_floor_from_profile()
+        sal_rows = conn.execute(
+            "SELECT url, title, site, salary, fit_score FROM jobs "
+            "WHERE salary IS NOT NULL AND salary != '' "
+            "AND COALESCE(apply_attempts,0) < 99 AND applied_at IS NULL "
+            "ORDER BY title"
+        ).fetchall()
+        below_rows = [
+            r for r in sal_rows
+            if _parse_salary(r[3])[1] is not None and _parse_salary(r[3])[1] < annual_floor
+        ]
+        if below_rows:
+            _show_table(
+                [(r[2], r[4], r[3], r[1]) for r in below_rows],
+                ["Site", "Score", "Salary", "Title"],
+                f"Jobs below salary floor (${annual_floor:,.0f}/yr)",
+            )
+            console.print(f"{len(below_rows)} job(s) will be permanently failed (not_eligible_salary).")
+            if _confirm(f"Permanently fail {len(below_rows)} below-salary job(s)?"):
+                for r in below_rows:
+                    conn.execute(
+                        "UPDATE jobs SET apply_status='failed', apply_error='not_eligible_salary', "
+                        "apply_attempts=99 WHERE url=?",
+                        (r[0],),
+                    )
+                conn.commit()
+                console.print(f"[green]Marked {len(below_rows)} below-salary job(s) as permanently failed.[/green]")
+            else:
+                console.print("[yellow]Skipped --below-salary.[/yellow]")
+        else:
+            console.print(f"[green]--below-salary: no jobs found below ${annual_floor:,.0f}/yr (with parseable salary).[/green]")
 
     # ------------------------------------------------------------------
     # --invalid-url / --all
