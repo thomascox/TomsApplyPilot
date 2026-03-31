@@ -497,8 +497,9 @@ function makeCard(j) {
       + '<div class="full-desc">' + esc(j.full_desc) + '</div></details>'
     : '';
 
-  const applyBtn = j.apply_url
-    ? '<a href="' + esc(j.apply_url) + '" class="apply-link" target="_blank">Apply &rarr;</a>' : '';
+  const _applyHref = j.apply_url || j.url;
+  const applyBtn = _applyHref
+    ? '<a href="' + esc(_applyHref) + '" class="apply-link" target="_blank">Apply &rarr;</a>' : '';
   const errNote = (j.stage === 'failed' && j.apply_error)
     ? '<span class="error-note">' + esc((ERROR_LABELS[j.apply_error]||j.apply_error).replace(/_/g,' ')) + '</span>' : '';
   // Reject button: shown for all non-applied jobs.
@@ -639,10 +640,10 @@ function render() {
     return true;
   });
 
-  // 2. Sort — favorites float to top; applied jobs sink to bottom of every section,
-  //    then sub-sort applied by applied_at descending (most recent applied first).
-  function favFirst(a, b)     { return (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0); }
-  function appliedLast(a, b)  {
+  // 2. Sort — favorites float to top; in score mode applied jobs sink to the
+  //    bottom of their score group (not the whole list); date/alpha ignore applied status.
+  function favFirst(a, b)    { return (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0); }
+  function appliedLast(a, b) {
     var aApp = a.stage === 'applied', bApp = b.stage === 'applied';
     if (aApp !== bApp) return aApp ? 1 : -1;
     // both applied: most recently applied first
@@ -650,15 +651,16 @@ function render() {
     return 0;
   }
   if (state.sort === 'score') {
+    // score → applied-last within score group → newest posted → alpha
     jobs.sort(function(a, b) {
-      return favFirst(a, b) || appliedLast(a, b) || ((b.score||0) - (a.score||0)) || (b.posted||'').localeCompare(a.posted||'') || a.title.localeCompare(b.title);
+      return favFirst(a, b) || ((b.score||0) - (a.score||0)) || appliedLast(a, b) || (b.posted||'').localeCompare(a.posted||'') || a.title.localeCompare(b.title);
     });
   } else if (state.sort === 'date') {
     jobs.sort(function(a, b) {
-      return favFirst(a, b) || appliedLast(a, b) || (b.posted||'').localeCompare(a.posted||'') || ((b.score||0) - (a.score||0));
+      return favFirst(a, b) || (b.posted||'').localeCompare(a.posted||'') || ((b.score||0) - (a.score||0));
     });
   } else {
-    jobs.sort(function(a, b) { return favFirst(a, b) || appliedLast(a, b) || a.title.localeCompare(b.title); });
+    jobs.sort(function(a, b) { return favFirst(a, b) || a.title.localeCompare(b.title); });
   }
 
   // 3. Render cards
