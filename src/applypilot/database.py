@@ -196,6 +196,10 @@ _ALL_COLUMNS: dict[str, str] = {
     "follow_up_due": "TEXT",
     # CRM tracking — recruiter or hiring manager contact info
     "recruiter_contact": "TEXT",
+    # Rejection feedback — enum key for why the job was rejected
+    "reject_reason": "TEXT",   # enum key: wrong_role_type | seniority_mismatch | company_type | salary_below_floor | location | industry | duplicate | overqualified | other
+    # Rejection feedback — optional free-text elaboration on the reason
+    "reject_note": "TEXT",     # optional free-text elaboration
 }
 
 
