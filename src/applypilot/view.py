@@ -902,6 +902,7 @@ const REJECT_REASONS = [
   {key: 'industry',            label: 'Industry not a fit'},
   {key: 'duplicate',           label: 'Duplicate / already applied elsewhere'},
   {key: 'overqualified',       label: 'Overqualified'},
+  {key: 'closed',              label: 'Posting closed / no longer accepting applications'},
   {key: 'other',               label: 'Other'},
 ];
 
@@ -924,6 +925,16 @@ function rejectJob(btn) {
   tmp.innerHTML = html;
   while (tmp.firstChild) { list.appendChild(tmp.firstChild); }
   note.value = '';
+  var flagRow = document.getElementById('reject-scoring-flag-row');
+  var flagCb  = document.getElementById('reject-scoring-flag');
+  if (flagRow) flagRow.classList.add('hidden');
+  if (flagCb)  flagCb.checked = false;
+  // Show scoring flag checkbox only when "Other" is selected
+  list.addEventListener('change', function() {
+    var sel = document.querySelector('input[name="reject-reason"]:checked');
+    if (flagRow) flagRow.classList.toggle('hidden', !sel || sel.value !== 'other');
+    if (flagCb && (!sel || sel.value !== 'other')) flagCb.checked = false;
+  });
   modal.classList.remove('hidden');
 }
 
@@ -941,8 +952,11 @@ function confirmReject() {
   if (!url) return;
   var selected = document.querySelector('input[name="reject-reason"]:checked');
   var reason = selected ? selected.value : '';
-  var noteEl = document.getElementById('reject-note');
-  var note = noteEl ? noteEl.value.trim() : '';
+  var noteEl  = document.getElementById('reject-note');
+  var note    = noteEl ? noteEl.value.trim() : '';
+  var flagCb  = document.getElementById('reject-scoring-flag');
+  if (flagCb && flagCb.checked && note) note = '[scoring] ' + note;
+  else if (flagCb && flagCb.checked && !note) note = '[scoring]';
   closeRejectModal();
   fetch('/api/reject', {
     method:  'POST',
@@ -1390,6 +1404,10 @@ def generate_dashboard(output_path: str | None = None) -> str:
     <div class="modal-subtitle">Why are you rejecting this job?</div>
     <div id="reject-reason-list" class="reason-list"></div>
     <textarea id="reject-note" class="crm-input" rows="2" placeholder="Optional note..."></textarea>
+    <label id="reject-scoring-flag-row" class="reason-opt hidden" style="margin-top:0.5rem;font-size:0.8rem;color:#94a3b8;">
+      <input type="checkbox" id="reject-scoring-flag" style="margin-right:0.4rem;">
+      Include in scoring feedback review
+    </label>
     <div class="modal-actions">
       <button class="modal-btn modal-cancel" onclick="closeRejectModal()">Cancel</button>
       <button class="modal-btn modal-confirm" onclick="confirmReject()">Remove</button>

@@ -30,6 +30,8 @@ VALID_STAGES = ("discover", "enrich", "score", "tailor", "cover", "pdf")
 
 # Generic avoid-message text for each rejection reason (used by `feedback` command).
 # Keys match the reject_reason enum stored in the database.
+# Keys present here → auto-suggest avoid entries when threshold is hit.
+# Omitted keys (duplicate, closed, other) are logistics reasons with no scoring signal.
 REASON_AVOID_MESSAGES: dict[str, str] = {
     "wrong_role_type":    "Roles whose core duties do not match target role type",
     "seniority_mismatch": "Roles with significant seniority mismatch (over or under-leveled)",
@@ -37,9 +39,11 @@ REASON_AVOID_MESSAGES: dict[str, str] = {
     "salary_below_floor": "Roles with stated salary below the candidate's minimum floor",
     "location":           "Roles with unfavourable location or remote policy",
     "industry":           "Roles in industries that are not a good fit",
-    "duplicate":          "Duplicate postings or roles already applied elsewhere",
     "overqualified":      "Roles where the candidate is significantly overqualified",
 }
+
+# Prefix stored in reject_note when user flags an "other" rejection for scoring review.
+SCORING_FLAG_PREFIX = "[scoring] "
 
 
 # ---------------------------------------------------------------------------
@@ -1226,6 +1230,24 @@ def feedback() -> None:
     existing_avoid  = list(existing.get("avoid") or [])
     existing_prefer = list(existing.get("prefer") or [])
     existing_note   = str(existing.get("calibration_note") or "").strip()
+
+    # ── Surface flagged "other" notes for manual review ──
+    flagged_rows = conn.execute("""
+        SELECT title, reject_note FROM jobs
+        WHERE reject_reason = 'other'
+        AND reject_note LIKE '[scoring]%'
+        ORDER BY discovered_at DESC
+    """).fetchall()
+    if flagged_rows:
+        console.print("[bold yellow]Flagged 'other' rejections[/bold yellow] "
+                      "(review manually — add to scoring_feedback.yaml if relevant):\n")
+        for row in flagged_rows:
+            note_text = (row[1] or "").removeprefix("[scoring]").strip()
+            title = (row[0] or "?")[:60]
+            console.print(f"  [dim]{title}[/dim]")
+            if note_text:
+                console.print(f"    [italic]{note_text}[/italic]")
+        console.print()
 
     # ── Generate suggestions based on top-pattern heuristics ──
     THRESHOLD = 3

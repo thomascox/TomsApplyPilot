@@ -12,6 +12,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Changes made in this personal fork relative to upstream Pickle-Pixel/ApplyPilot.
 Upstream changes are pulled in periodically; only fork-specific additions are listed here.
 
+### 2026-04-01
+
+#### Dashboard — reject modal refinements
+
+- **"Closed" reason added**: new reject reason "Posting closed / no longer accepting
+  applications" — stored in `reject_reason` but deliberately excluded from
+  `REASON_AVOID_MESSAGES` so it never influences scoring feedback
+- **"Duplicate" removed from scoring feedback**: duplicate is a logistics reason,
+  not a preference signal — `applypilot feedback` no longer suggests avoid entries
+  for it
+- **"Other" + scoring flag**: when "Other" is selected, an optional "Include in
+  scoring feedback review" checkbox appears. If checked, `reject_note` is prefixed
+  with `[scoring]`. Running `applypilot feedback` surfaces these flagged notes
+  separately for manual review — they are never auto-added (too freeform) but
+  listed so you can hand-write `avoid` entries if warranted
+
 ### 2026-03-31 (3)
 
 #### Code cleanup — simplify pass
