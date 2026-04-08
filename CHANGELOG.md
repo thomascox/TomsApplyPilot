@@ -12,6 +12,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Changes made in this personal fork relative to upstream Pickle-Pixel/ApplyPilot.
 Upstream changes are pulled in periodically; only fork-specific additions are listed here.
 
+### 2026-04-08
+
+#### Scoring — resilience fixes
+
+- **Per-job DB writes**: each score is committed to the database immediately after
+  the LLM responds. Ctrl+C during a scoring batch no longer discards all progress —
+  every job scored before the interrupt is saved.
+- **LLM errors leave job unscored**: when the LLM call fails (network error, 400,
+  timeout, parse failure), the job's `fit_score` is left NULL so it stays in the
+  `pending_score` queue and is picked up automatically on the next `applypilot score`
+  run. Previously a `fit_score=0` was written, permanently removing the job from
+  the queue.
+- **Explicit error flag**: `score_job()` now returns `"error": bool` instead of
+  using `score==0` as an error sentinel — cleaner and future-proof.
+
 ### 2026-04-01
 
 #### Dashboard — reject modal refinements

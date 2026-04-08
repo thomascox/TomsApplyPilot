@@ -279,7 +279,7 @@ def score_job(resume_text: str, job: dict, profile: dict, feedback_block: str = 
                 f" (Score capped to 2: role is not location-eligible for candidate in {candidate_location}.)"
             )
 
-        return result
+        return {**result, "error": False}
 
     except Exception as e:
         log.error("LLM error scoring job '%s': %s", job.get("title", "?"), e)
@@ -288,6 +288,7 @@ def score_job(resume_text: str, job: dict, profile: dict, feedback_block: str = 
             "keywords": "",
             "reasoning": f"LLM error: {e}",
             "location_eligible": True,
+            "error": True,
         }
 
 
@@ -387,28 +388,38 @@ def run_scoring(
     t0 = time.time()
     completed = 0
     errors = 0
-    results: list[dict] = []
+    ineligible = 0
+    regressions: list[dict] = []
 
     for job in jobs:
         old_score: int | None = job.get("fit_score")
         result = score_job(resume_text, job, profile, feedback_block)
-        result["url"] = job["url"]
-        result["old_score"] = old_score
         completed += 1
-
-        if result["score"] == 0:
-            errors += 1
-
-        results.append(result)
 
         loc_flag = "" if result["location_eligible"] else " [NOT ELIGIBLE - location]"
         rescore_flag = f" (was {old_score})" if rescore and old_score is not None else ""
+
+        if result["error"]:
+            # LLM failure — do NOT write to DB so fit_score stays NULL and the
+            # job remains in pending_score, picked up automatically on the next run.
+            errors += 1
+            log.warning(
+                "[%d/%d] SKIPPED (LLM error — will retry next run)%s  %s",
+                completed, len(jobs),
+                rescore_flag,
+                (job.get("title") or "?")[:60],
+            )
+            continue
+
         log.info(
             "[%d/%d] score=%d%s%s  %s",
             completed, len(jobs),
             result["score"], rescore_flag, loc_flag,
             (job.get("title") or "?")[:60],
         )
+
+        if not result["location_eligible"]:
+            ineligible += 1
 
         # Warn prominently if a previously eligible job dropped below the threshold
         if (
@@ -431,31 +442,31 @@ def run_scoring(
                 result["reasoning"],
                 job.get("url", ""),
             )
+            regressions.append(result)
 
-    # Write scores to DB, saving previous score before overwriting
-    now = datetime.now(timezone.utc).isoformat()
-    for r in results:
-        old = r.get("old_score")
+        # Write immediately so Ctrl+C preserves all progress up to this point.
+        now = datetime.now(timezone.utc).isoformat()
         conn.execute(
             "UPDATE jobs "
             "SET fit_score=?, score_reasoning=?, scored_at=?, location_eligible=?, "
             "previous_score=? "
             "WHERE url=?",
             (
-                r["score"],
-                f"{r['keywords']}\n{r['reasoning']}",
+                result["score"],
+                f"{result['keywords']}\n{result['reasoning']}",
                 now,
-                1 if r.get("location_eligible", True) else 0,
-                old,        # NULL for first-time scores, previous value on rescore
-                r["url"],
+                1 if result["location_eligible"] else 0,
+                old_score,
+                job["url"],
             ),
         )
-    conn.commit()
+        conn.commit()
 
+    scored = completed - errors
     elapsed = time.time() - t0
     log.info(
-        "Done: %d scored in %.1fs (%.1f jobs/sec)",
-        len(results), elapsed, len(results) / elapsed if elapsed > 0 else 0,
+        "Done: %d scored, %d LLM error(s) left in queue — %.1fs (%.1f jobs/sec)",
+        scored, errors, elapsed, scored / elapsed if elapsed > 0 else 0,
     )
 
     # Score distribution
@@ -467,7 +478,6 @@ def run_scoring(
     distribution = [(row[0], row[1]) for row in dist]
 
     # Summary notices
-    ineligible = sum(1 for r in results if not r.get("location_eligible", True))
     if ineligible:
         log.info(
             "%d job(s) scored <=2 due to location ineligibility. "
@@ -475,13 +485,6 @@ def run_scoring(
             ineligible,
         )
 
-    regressions = [
-        r for r in results
-        if rescore
-        and r.get("old_score") is not None
-        and r["old_score"] >= min_score
-        and r["score"] < min_score
-    ]
     if regressions:
         log.warning(
             "%d job(s) dropped below the threshold (%d) after rescoring. "
@@ -491,7 +494,7 @@ def run_scoring(
 
     skipped = protected_count if (rescore and rescore_protect) else 0
     return {
-        "scored": len(results),
+        "scored": scored,
         "skipped_protected": skipped,
         "errors": errors,
         "elapsed": elapsed,
