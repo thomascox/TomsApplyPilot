@@ -657,27 +657,38 @@ function render() {
     return true;
   });
 
-  // 2. Sort — favorites float to top; in score mode applied jobs sink to the
-  //    bottom of their score group (not the whole list); date/alpha ignore applied status.
-  function favFirst(a, b)    { return (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0); }
-  function appliedLast(a, b) {
-    var aApp = a.stage === 'applied', bApp = b.stage === 'applied';
-    if (aApp !== bApp) return aApp ? 1 : -1;
-    // both applied: most recently applied first
-    if (aApp) return (b.applied_at||'').localeCompare(a.applied_at||'');
-    return 0;
+  // 2. Sort.
+  // Score mode order within each score group: favorites → regular → applied.
+  // Date/alpha modes: favorites float to top globally, applied jobs have no special position.
+  function statusRank(j) {
+    // Lower = earlier. applied is always last within a score group.
+    if (j.stage === 'applied') return 2;
+    if (j.favorite) return 0;
+    return 1;
+  }
+  function appliedRecency(a, b) {
+    // Both applied — most recently applied first.
+    return (b.applied_at||'').localeCompare(a.applied_at||'');
   }
   if (state.sort === 'score') {
-    // score → applied-last within score group → newest posted → alpha
+    // score desc → status rank (fav < regular < applied) → newest posted → alpha
     jobs.sort(function(a, b) {
-      return favFirst(a, b) || ((b.score||0) - (a.score||0)) || appliedLast(a, b) || (b.posted||'').localeCompare(a.posted||'') || a.title.localeCompare(b.title);
+      return ((b.score||0) - (a.score||0))
+          || (statusRank(a) - statusRank(b))
+          || (a.stage === 'applied' && b.stage === 'applied' ? appliedRecency(a, b) : 0)
+          || (b.posted||'').localeCompare(a.posted||'')
+          || a.title.localeCompare(b.title);
     });
   } else if (state.sort === 'date') {
     jobs.sort(function(a, b) {
-      return favFirst(a, b) || (b.posted||'').localeCompare(a.posted||'') || ((b.score||0) - (a.score||0));
+      return ((b.favorite ? 1 : 0) - (a.favorite ? 1 : 0))
+          || (b.posted||'').localeCompare(a.posted||'')
+          || ((b.score||0) - (a.score||0));
     });
   } else {
-    jobs.sort(function(a, b) { return favFirst(a, b) || a.title.localeCompare(b.title); });
+    jobs.sort(function(a, b) {
+      return ((b.favorite ? 1 : 0) - (a.favorite ? 1 : 0)) || a.title.localeCompare(b.title);
+    });
   }
 
   // 3. Render cards
