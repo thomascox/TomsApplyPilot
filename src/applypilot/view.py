@@ -658,20 +658,19 @@ function render() {
   });
 
   // 2. Sort.
-  // Score mode order within each score group: favorites → regular → applied.
+  // Score mode order within each score group: favorite → ready → needs tailor → applied.
   // Date/alpha modes: favorites float to top globally, applied jobs have no special position.
   function statusRank(j) {
-    // Lower = earlier. applied is always last within a score group.
-    if (j.stage === 'applied') return 2;
-    if (j.favorite) return 0;
-    return 1;
+    if (j.favorite)            return 0; // favorites always first (includes applied favorites)
+    if (j.stage === 'ready')   return 1;
+    if (j.stage === 'applied') return 3;
+    return 2; // pending (needs tailor), scored, unscored
   }
   function appliedRecency(a, b) {
-    // Both applied — most recently applied first.
     return (b.applied_at||'').localeCompare(a.applied_at||'');
   }
   if (state.sort === 'score') {
-    // score desc → status rank (fav < regular < applied) → newest posted → alpha
+    // score desc → status rank (fav < ready < needs tailor < applied) → newest posted → alpha
     jobs.sort(function(a, b) {
       return ((b.score||0) - (a.score||0))
           || (statusRank(a) - statusRank(b))
